@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/@ztools-center/ztools-api-types/resource/ztools.schema.json",
+  "name": "scripty",
+  "title": "任务库",
+  "description": "一个轻量脚本任务管理工具",
+  "author": "皮皮虾我们走",
+  "version": "1.0.0",
+  "main": "index.html",
+  "preload": "preload/services.js",
+  "logo": "logo.png",
+  "development": {
+    "main": "http://localhost:5173"
+  },
+  "features": [
+    {
+      "code": "scripty",
+      "explain": "打开 Scripty 脚本任务库",
+      "icon": "logo.png",
+      "cmds": ["任务库", "Scripty", "脚本任务"]
+    }
+  ]
+}
