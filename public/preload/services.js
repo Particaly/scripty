@@ -1,48 +1,31 @@
-const { spawn } = require('node:child_process')
+'use strict'
+
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const {
+  LogFileRepository,
+  ManagedScriptRepository
+} = require('./file-repositories')
+const {
+  MetadataRepository,
+  RepositoryError
+} = require('./metadata-repository')
+const { createAppApi } = require('./app-service')
+const { writeBackupArchive } = require('./backup-archive')
+const { buildExportPackageFiles } = require('./backup-package')
+const { createBackupsApi } = require('./backup-service')
+const { recoverImportTransactions } = require('./backup-import-transaction')
+const { createEnvironmentsApi } = require('./environment-service')
+const { createHistoryApi } = require('./history-service')
+const { createInterpreterResolver } = require('./interpreter-resolver')
+const { createRunService, recoverInterruptedRuns } = require('./run-service')
+const { createSchedulerService, registerSchedulerLifecycle } = require('./scheduler-service')
+const { createScriptsApi } = require('./script-service')
+const { createSettingsApi } = require('./settings-service')
+const { createTasksApi } = require('./task-service')
 
-const lifecycleLogPath = path.join(os.tmpdir(), 'scripty-preload-lifecycle.jsonl')
-const childProcessLogPath = path.join(os.tmpdir(), 'scripty-child-process.jsonl')
-const preloadStartedAt = new Date().toISOString()
-let probeChild = null
-
-function appendJsonLine(filePath, entry) {
-  fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, { encoding: 'utf-8' })
-  return entry
-}
-
-function appendLifecycleEvent(event, details = {}) {
-  return appendJsonLine(lifecycleLogPath, {
-    timestamp: new Date().toISOString(),
-    event,
-    pid: process.pid,
-    preloadStartedAt,
-    ...details
-  })
-}
-
-function appendChildProcessEvent(event, details = {}) {
-  return appendJsonLine(childProcessLogPath, {
-    timestamp: new Date().toISOString(),
-    event,
-    parentPid: process.pid,
-    childPid: probeChild?.pid ?? details.childPid,
-    ...details
-  })
-}
-
-appendLifecycleEvent('preload-started')
-
-setInterval(() => {
-  appendLifecycleEvent('preload-heartbeat')
-}, 1000)
-
-process.once('exit', (code) => {
-  appendLifecycleEvent('preload-process-exit', { code })
-})
-
+/** Resolves Scripty's fixed device-local directory layout from the ZTools user data path. */
 function getDataPaths() {
   const root = path.join(window.ztools.getPath('userData'), 'scripty')
   return {
@@ -54,97 +37,70 @@ function getDataPaths() {
   }
 }
 
-function ensureDataPaths() {
-  const dataPaths = getDataPaths()
-  Object.values(dataPaths).forEach((directory) => fs.mkdirSync(directory, { recursive: true }))
-  return dataPaths
+const dataPaths = getDataPaths()
+recoverImportTransactions(dataPaths.root)
+const metadataRepository = new MetadataRepository(dataPaths.metadata)
+const managedScriptRepository = new ManagedScriptRepository(dataPaths.scripts)
+const logFileRepository = new LogFileRepository(dataPaths.logs)
+metadataRepository.initialize()
+managedScriptRepository.initialize()
+logFileRepository.initialize()
+recoverInterruptedRuns(metadataRepository)
+
+const interpreterResolver = createInterpreterResolver({
+  platform: process.platform,
+  environment: process.env,
+  homeDirectory: os.homedir()
+})
+const runService = createRunService(metadataRepository, managedScriptRepository, logFileRepository, undefined, process.platform, undefined, interpreterResolver)
+const scheduler = createSchedulerService({ startScheduledRun: runService.startScheduled })
+scheduler.initialize(metadataRepository.read('tasks'))
+registerSchedulerLifecycle(window.ztools, scheduler)
+const tasksApi = createTasksApi(metadataRepository, managedScriptRepository, scheduler, interpreterResolver)
+
+/** Creates a timestamped full portable backup in the fixed backups directory before overwrite restoration. */
+async function createAutomaticBackup() {
+  const exportedAt = new Date().toISOString()
+  const packageSnapshot = buildExportPackageFiles({
+    appVersion: require('../plugin.json').version,
+    exportedAt,
+    options: { includeEnvironments: true, includeEnvironmentValues: true, includeSensitiveValues: true },
+    envelopes: {
+      scripts: metadataRepository.readEnvelope('scripts'),
+      tasks: metadataRepository.readEnvelope('tasks'),
+      environments: metadataRepository.readEnvelope('environments'),
+      settings: metadataRepository.readEnvelope('settings')
+    },
+    readScriptContent: script => managedScriptRepository.read(script.id, script.language)
+  })
+  fs.mkdirSync(dataPaths.backups, { recursive: true })
+  const fileName = `pre-overwrite-${exportedAt.replace(/[:.]/g, '-')}.zip`
+  await writeBackupArchive(packageSnapshot.files, path.join(dataPaths.backups, fileName))
+  return fileName
 }
 
-// 通过 window 对象向渲染进程注入 nodejs 能力
-window.services = {
-  dataPaths: {
-    ensure: ensureDataPaths
-  },
-  lifecycleProbe: {
-    record(event, details) {
-      return appendLifecycleEvent(event, details)
-    },
-    status() {
-      return {
-        lifecycleLogPath,
-        pid: process.pid,
-        preloadStartedAt
-      }
-    },
-    readLog() {
-      if (!fs.existsSync(lifecycleLogPath)) return ''
-      return fs.readFileSync(lifecycleLogPath, { encoding: 'utf-8' })
-    },
-    clearLog() {
-      fs.writeFileSync(lifecycleLogPath, '', { encoding: 'utf-8' })
-      return appendLifecycleEvent('probe-log-cleared')
-    }
-  },
-  childProcessProbe: {
-    start() {
-      if (probeChild) return { started: false, childPid: probeChild.pid, childProcessLogPath }
-      const script = [
-        "let count = 0",
-        "console.log('child-started')",
-        "console.error('child-stderr-started')",
-        "setInterval(() => { count += 1; console.log('tick:' + count); if (count % 2 === 0) console.error('stderr-tick:' + count) }, 500)"
-      ].join(';')
-      probeChild = spawn('node', ['-e', script], {
-        shell: false,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      appendChildProcessEvent('child-spawned')
-      probeChild.stdout.on('data', (chunk) => appendChildProcessEvent('child-stdout', { output: chunk.toString() }))
-      probeChild.stderr.on('data', (chunk) => appendChildProcessEvent('child-stderr', { output: chunk.toString() }))
-      probeChild.once('error', (error) => appendChildProcessEvent('child-error', { error: error.message }))
-      probeChild.once('exit', (code, signal) => {
-        const childPid = probeChild?.pid
-        appendChildProcessEvent('child-exit', { childPid, code, signal })
-        probeChild = null
-      })
-      return { started: true, childPid: probeChild.pid, childProcessLogPath }
-    },
-    stop() {
-      if (!probeChild) return false
-      appendChildProcessEvent('child-stop-requested')
-      return probeChild.kill()
-    },
-    status() {
-      return { running: probeChild !== null, childPid: probeChild?.pid, childProcessLogPath }
-    },
-    readLog() {
-      if (!fs.existsSync(childProcessLogPath)) return ''
-      return fs.readFileSync(childProcessLogPath, { encoding: 'utf-8' })
-    },
-    clearLog() {
-      fs.writeFileSync(childProcessLogPath, '', { encoding: 'utf-8' })
-    }
-  },
-  // 读文件
-  readFile(file) {
-    return fs.readFileSync(file, { encoding: 'utf-8' })
-  },
-  // 文本写入到下载目录
-  writeTextFile(text) {
-    const filePath = path.join(window.ztools.getPath('downloads'), Date.now().toString() + '.txt')
-    fs.writeFileSync(filePath, text, { encoding: 'utf-8' })
-    return filePath
-  },
-  // 图片写入到下载目录
-  writeImageFile(base64Url) {
-    const matchs = /^data:image\/([a-z]{1,20});base64,/i.exec(base64Url)
-    if (!matchs) return
-    const filePath = path.join(
-      window.ztools.getPath('downloads'),
-      Date.now().toString() + '.' + matchs[1]
-    )
-    fs.writeFileSync(filePath, base64Url.substring(matchs[0].length), { encoding: 'base64' })
-    return filePath
-  }
+window.scripty = {
+  app: createAppApi(scheduler),
+  backups: createBackupsApi(metadataRepository, managedScriptRepository, {
+    appVersion: require('../plugin.json').version,
+    createAutomaticBackup,
+    dataRoot: dataPaths.root,
+    scheduler,
+    ztools: window.ztools
+  }),
+  environments: createEnvironmentsApi(metadataRepository, window.ztools),
+  history: createHistoryApi(metadataRepository, logFileRepository, runService.api),
+  runs: runService.api,
+  scripts: createScriptsApi(metadataRepository, managedScriptRepository, window.ztools),
+  settings: createSettingsApi(metadataRepository, window.ztools),
+  tasks: tasksApi
+}
+
+module.exports = {
+  dataPaths,
+  logFileRepository,
+  managedScriptRepository,
+  metadataRepository,
+  RepositoryError,
+  scheduler
 }

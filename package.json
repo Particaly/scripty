@@ -1,20 +1,31 @@
 {
   "name": "scripty",
   "version": "1.0.0",
-  "description": "一个轻量脚本任务管理工具",
+  "description": "ZTools 本地脚本任务管理器，支持安全执行、Cron 调度、环境变量、运行日志和备份迁移",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build"
+    "test": "node scripts/run-unit-tests.mjs",
+    "test:release": "node --test test/release-artifact.test.cjs",
+    "build": "vue-tsc && vite build",
+    "check": "npm test && npm run build",
+    "release": "npm run check && npm run test:release && node scripts/release.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "verify:clean": "node scripts/verify-clean-copy.mjs"
   },
   "dependencies": {
+    "cron-parser": "^5.6.1",
     "vue": "^3.5.13",
     "vue-router": "^4.6.4",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1",
     "ztools-ui": "^0.1.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
     "@ztools-center/ztools-api-types": "^1.0.1",
+    "esbuild": "^0.25.12",
+    "playwright": "^1.61.1",
     "typescript": "^5.3.0",
     "vite": "^6.0.11",
     "vue-tsc": "^2.0.0"

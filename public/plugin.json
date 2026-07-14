@@ -1,8 +1,8 @@
 {
   "$schema": "node_modules/@ztools-center/ztools-api-types/resource/ztools.schema.json",
   "name": "scripty",
-  "title": "任务库",
-  "description": "一个轻量脚本任务管理工具",
+  "title": "Scripty 任务库",
+  "description": "本地管理、运行和定时调度脚本，支持环境变量、运行日志与备份迁移",
   "author": "皮皮虾我们走",
   "version": "1.0.0",
   "main": "index.html",
@@ -17,6 +17,19 @@
       "explain": "打开 Scripty 脚本任务库",
       "icon": "logo.png",
       "cmds": ["任务库", "Scripty", "脚本任务"]
+    },
+    {
+      "code": "scripty-run-task",
+      "explain": "选择并运行 Scripty 中可运行的任务",
+      "icon": "logo.png",
+      "mainPush": true,
+      "cmds": ["运行任务", "运行指定任务"]
+    },
+    {
+      "code": "scripty-running",
+      "explain": "查看 Scripty 当前运行中的任务",
+      "icon": "logo.png",
+      "cmds": ["运行中任务", "查看运行中任务"]
     }
   ]
 }

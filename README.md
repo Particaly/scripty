@@ -1,281 +1,153 @@
-# scripty
+# Scripty
 
-> 一个轻量脚本任务管理工具
+> ZTools 中的本地轻量脚本任务管理器。
 
-这是一个使用 **Vue 3 + Vite + TypeScript** 构建的 ZTools 插件。
+Scripty 用于集中管理、运行和定时调度当前设备上的脚本。脚本源码、任务配置、环境变量、运行记录和日志均保存在本地，不依赖远程服务。
 
-## ✨ 功能特性
+当前版本：**1.0.0（首个 MVP）**
 
-### 📌 已包含的示例功能
+## 功能
 
-- **Hello** - 基础功能指令示例
-  - 触发指令：`你好` / `hello`
-  - 展示简单的 Vue 组件界面
+- 新建、导入、编辑和删除托管脚本
+- 管理 JavaScript、Python、PowerShell 和 Shell 任务
+- 配置参数、工作目录、超时、并发策略和五段 Cron
+- 手动运行、停止任务并实时查看 stdout/stderr
+- 查看运行状态、退出码、耗时、错误摘要和分块历史日志
+- 管理全局与任务级环境变量，支持 `.env` 导入和导出
+- 默认遮罩敏感变量，并在写入实时与历史日志前脱敏
+- 按任务、数量或保留天数清理运行历史和日志
+- 通过版本化 ZIP 包预览、合并或覆盖恢复本地数据
+- 提供“任务库”“运行指定任务”“运行中任务”ZTools 快捷指令
+- 跟随 ZTools 亮色、暗色和主题色设置
 
-- **读文件** - 文件读取功能示例
-  - 功能指令：`读文件`
-  - 匹配指令：支持拖拽文件触发
-  - 演示如何使用 Node.js 能力读取文件内容
+## 重要说明
 
-- **保存为文件** - 文件写入功能示例
-  - 匹配指令：任意文本/图片 → `保存为文件`
-  - 演示如何将剪贴板内容保存为文件
+### 调度生命周期
 
-## 📁 项目结构
+Cron **仅在 Scripty 插件进程存活期间生效**。隐藏窗口或将插件退到后台不会暂停调度；完全退出插件或 ZTools 后，调度停止。Scripty 不是系统级常驻服务，也不会承诺插件关闭后的后台执行。
 
-```
-.
-├── public/
-│   ├── logo.png              # 插件图标
-│   ├── plugin.json           # 插件配置文件
-│   └── preload/              # Preload 脚本目录
-│       ├── package.json      # Preload 依赖配置
-│       └── services.js       # Node.js 能力扩展
-├── src/
-│   ├── main.ts               # 入口文件
-│   ├── main.css              # 全局样式
-│   ├── App.vue               # 根组件
-│   ├── env.d.ts              # 类型声明
-│   ├── Hello/                # Hello 功能组件
-│   │   └── index.vue
-│   ├── Read/                 # 读文件功能组件
-│   │   └── index.vue
-│   └── Write/                # 写文件功能组件
-│       └── index.vue
-├── index.html                # HTML 模板
-├── vite.config.js            # Vite 配置
-├── tsconfig.json             # TypeScript 配置
-├── package.json              # 项目依赖
-└── README.md                 # 项目文档
+### 数据与敏感信息
+
+- 所有数据默认保存在 `<ZTools userData>/scripty`。
+- 环境变量值以本地数据形式保存，不等同于系统密钥库保护。
+- 敏感值默认不显示、不进入普通导出，并在日志写入前遮罩。
+- 只有用户显式选择并再次确认后，备份包才会包含敏感值；这类 ZIP 包含本地明文敏感信息，请妥善保管。
+- 导入的脚本会复制到托管目录；之后修改托管副本不会改动原始文件。
+
+本地目录布局：
+
+```text
+<ZTools userData>/scripty/
+├── data/       # 脚本、任务、环境变量、设置和运行记录元数据
+├── scripts/    # 托管脚本源码
+├── logs/       # 独立运行日志
+└── backups/    # 覆盖恢复前的自动备份
 ```
 
-## 🚀 快速开始
+## 支持范围
+
+MVP 优先支持 Windows，并保持执行层可扩展到 macOS 和 Linux。Scripty 不负责安装 Node.js、Python、PowerShell、Shell 或脚本依赖，请先在本机安装所需运行时。解释器使用显式绝对路径时始终以该路径为准；使用裸命令时会先从 ZTools 宿主进程的 `PATH` 解析。在 macOS 上，如果 JavaScript 任务使用 `node` 且图形界面的 `PATH` 中没有 Node，还会尝试 `$MISE_DATA_DIR`、`XDG_DATA_HOME/mise` 或 `~/.local/share/mise` 下的标准 Node 安装。
+
+mise 自动发现优先使用 `installs/node/latest/bin/node` 指向的独立 Node 可执行文件；若没有该别名，则兼容回退到 `shims/node`。该过程不会执行 `mise`，也不会加载 `.zshrc` 等 Shell 配置。自动解析出的设备路径不会写入任务或备份。若使用其他目录且该目录没有进入 ZTools 的环境变量，请在“设置”或任务中手动配置绝对 Node 路径。
+
+当前不包含：
+
+- 多设备自动同步、用户系统或远程访问
+- Docker、分布式执行节点或系统级守护进程
+- Git 仓库订阅、远程脚本自动更新或在线脚本市场
+- 运行时与第三方依赖的自动安装
+- 青龙面板 API 兼容
+
+## 使用
+
+1. 通过“任务库”或“Scripty”指令进入插件。
+2. 在“脚本”中新建脚本，或选择本地文件导入托管副本。
+3. 在“设置”中确认相应语言的解释器；macOS 上标准 mise Node 可由 `node` 自动解析，必要时再配置绝对路径。
+4. 在“任务”中关联脚本，并配置参数、目录、超时、并发和可选 Cron。
+5. 手动运行任务，或启用带 Cron 的任务。
+6. 在“运行中”查看实时输出，在“运行历史”查看结果和日志。
+7. 在“备份”中导出迁移包；导入前可预览变更并选择合并或覆盖。
+
+任务参数会以结构化参数数组传给 `child_process.spawn`，默认使用 `shell: false`，不会把任务名称或参数拼接成 Shell 命令。
+
+## 开发
+
+### 环境要求
+
+- Node.js 18 或更高版本
+- npm
+- ZTools（进行宿主集成和实际插件验证时）
 
 ### 安装依赖
 
 ```bash
-npm install
+npm ci
 ```
 
-### 开发模式
+### 启动开发服务器
 
 ```bash
 npm run dev
 ```
 
-开发服务器将在 `http://localhost:5173` 启动。ZTools 会自动加载开发版本。
+开发入口为 `http://localhost:5173`，由 `public/plugin.json` 的 `development.main` 提供给 ZTools。
 
-### 构建生产版本
+### 测试与构建
 
 ```bash
+npm run check
+```
+
+该命令依次运行 Node.js 单元测试、Vue TypeScript 检查和 Vite 生产构建。构建产物输出到 `dist/`。
+
+也可分别执行：
+
+```bash
+npm test
 npm run build
 ```
 
-构建产物将输出到 `dist/` 目录。
+## 产出与安装发布制品
 
-## 📖 开发指南
+1. 执行 `npm ci && npm run release`。
+2. 使用 `npm run release:verify` 校验生产清单、资源、自包含 preload、普通 ZIP 与文件哈希。
+3. 将 `release/scripty-1.0.0/` 作为完整插件目录导入 ZTools，并通过“任务库”指令进入。
+4. 首次使用时确认解释器解析结果和调度生命周期提示；macOS 标准 mise Node 通常无需手动填写版本路径。
 
-### 1. 修改插件配置
+`dist/` 只是 Vite 中间构建，其中保留开发用文件，不是正式制品。正式目录仅包含 `index.html`、生产 `plugin.json`、`logo.png`、前端资源和已打包依赖的 `preload/`。`release/scripty-1.0.0.zip` 是内容相同、可重复生成的普通传输 ZIP；本地资料尚未证明 ZTools 支持直接导入该 ZIP 或要求 `.upx`，因此应先解压，再按完整目录导入。不要只复制 `index.html`。
 
-编辑 `public/plugin.json` 文件：
-
-```json
-{
-  "name": "你的插件名称",
-  "description": "插件描述",
-  "author": "作者名称",
-  "version": "1.0.0",
-  "features": [
-    // 添加你的功能配置
-  ]
-}
-```
-
-### 2. 创建新功能
-
-#### 步骤 1: 创建 Vue 组件
-
-在 `src/` 目录下创建新的功能组件：
-
-```vue
-<!-- src/MyFeature/index.vue -->
-<template>
-  <div class="my-feature">
-    <h1>{{ title }}</h1>
-    <!-- 你的组件内容 -->
-  </div>
-</template>
-
-<script setup lang="ts">
-import { ref } from 'vue'
-
-const title = ref('我的新功能')
-</script>
-
-<style scoped>
-.my-feature {
-  padding: 20px;
-}
-</style>
-```
-
-#### 步骤 2: 注册路由
-
-在 `src/App.vue` 中添加路由：
-
-```vue
-<script setup lang="ts">
-import MyFeature from './MyFeature/index.vue'
-
-const routes = {
-  hello: Hello,
-  read: Read,
-  write: Write,
-  myfeature: MyFeature // 添加新路由
-}
-</script>
-```
-
-#### 步骤 3: 配置功能
-
-在 `plugin.json` 中添加功能配置：
-
-```json
-{
-  "code": "myfeature",
-  "explain": "我的新功能",
-  "icon": "logo.png",
-  "cmds": ["触发指令"]
-}
-```
-
-### 3. 使用 Node.js 能力
-
-#### 扩展 Preload 服务
-
-编辑 `public/preload/services.js`：
-
-```javascript
-const fs = require('fs')
-const path = require('path')
-
-module.exports = {
-  // 示例：读取文件
-  readFile: (filePath) => {
-    return fs.readFileSync(filePath, 'utf-8')
-  },
-
-  // 添加你的服务
-  myService: (params) => {
-    // 实现你的逻辑
-    return result
-  }
-}
-```
-
-#### 在 Vue 组件中调用
-
-```vue
-<script setup lang="ts">
-const handleRead = async () => {
-  try {
-    const content = await window.services.readFile('/path/to/file')
-    console.log(content)
-  } catch (error) {
-    console.error('读取失败:', error)
-  }
-}
-</script>
-```
-
-### 4. 使用 ZTools API
-
-```vue
-<script setup lang="ts">
-// 获取剪贴板内容
-const text = await window.ztools.getClipboardContent()
-
-// 隐藏主窗口
-window.ztools.hideMainWindow()
-
-// 显示提示
-window.ztools.showTip('操作成功')
-
-// 更多 API 请参考官方文档
-</script>
-```
-
-## 🎨 样式开发
-
-### 使用 CSS 变量
-
-ZTools 提供了一套 CSS 变量用于主题适配：
-
-```css
-.my-component {
-  background: var(--bg-color);
-  color: var(--text-color);
-  border: 1px solid var(--border-color);
-}
-```
-
-### 暗色模式支持
-
-```css
-@media (prefers-color-scheme: dark) {
-  .my-component {
-    /* 暗色模式样式 */
-  }
-}
-```
-
-## 📦 构建与发布
-
-### 1. 构建插件
+在仓库外的全新源码副本中执行两次完整安装、构建与哈希一致性检查：
 
 ```bash
-npm run build
+npm run verify:clean
 ```
 
-### 2. 测试构建产物
+该命令还会在移除副本 `node_modules` 后重新验证 preload，并使用 Chromium 加载最终 renderer。Windows/ZTools 对最终 SHA-256 制品的宿主安装确认单独记录在发布说明中。
 
-将 `dist/` 目录中的所有文件复制到 ZTools 插件目录进行测试。
+## 备份兼容性
 
-### 3. 发布到插件市场
+Scripty 1.0.0 使用备份协议 `1.0`。导入时会校验格式版本、清单、受控路径、文件数量与大小、SHA-256、实体关系和脚本内容哈希。合并导入按稳定 ID 更新；覆盖恢复会先自动备份当前数据。校验或事务失败时不会留下半导入状态。
 
-1. 确保 `plugin.json` 中的信息完整准确
-2. 准备好插件截图和详细说明
-3. 访问 ZTools 插件市场提交插件
+## 项目结构
 
-## 📚 相关资源
+```text
+.
+├── public/
+│   ├── logo.png
+│   ├── plugin.json
+│   └── preload/        # 文件、进程、调度、历史、环境和备份服务
+├── src/
+│   ├── components/     # 任务、脚本、运行、历史、环境、备份和设置视图
+│   ├── types/          # 领域模型与受限 preload API 类型
+│   ├── App.vue
+│   ├── main.ts
+│   └── plugin-entry.ts
+├── test/               # Node.js 单元与迁移回归测试
+├── RELEASE_NOTES.md
+├── ROADMAP.md
+└── package.json
+```
 
-- [ZTools 官方文档](https://github.com/ztool-center/ztools)
-- [ZTools API 文档](https://github.com/ztool-center/ztools-api-types)
-- [Vue 3 文档](https://vuejs.org/)
-- [Vite 文档](https://vitejs.dev/)
+## 发布说明
 
-## ❓ 常见问题
-
-### Q: 如何调试插件？
-
-A: 使用 `npm run dev` 启动开发服务器，在插件界面中点击插件头像图标，在弹出的菜单中选择"打开开发者工具"进行调试。
-
-### Q: 如何访问 Node.js 能力？
-
-A: 通过 `public/preload/services.js` 文件扩展服务，然后在组件中使用 `window.services` 调用。
-
-### Q: 插件图标不显示？
-
-A: 确保 `public/logo.png` 文件存在，且在 `plugin.json` 中正确配置了 `logo` 字段。
-
-### Q: 如何处理大文件上传？
-
-A: 建议使用 Node.js 流式处理，在 preload 脚本中实现文件分块处理逻辑。
-
-## 📄 开源协议
-
-MIT License
-
----
-
-**祝你开发愉快！** 🎉
+首个 MVP 的功能、限制和验证范围见 [RELEASE_NOTES.md](./RELEASE_NOTES.md)。
