@@ -547,25 +547,27 @@ watch(
       </ZDrawerContent>
     </ZDrawer>
 
-    <div class="section-heading">
-      <div>
-        <h2 id="tasks-heading">任务库</h2>
-        <p>集中查看任务配置、可运行状态与调度启停。</p>
+    <div class="view-toolbar">
+      <div class="section-heading">
+        <div>
+          <h2 id="tasks-heading">任务库</h2>
+        </div>
+        <div class="section-heading__actions">
+          <ZTag type="info" size="small">{{ filteredTasks.length }} / {{ tasks.length }}</ZTag>
+          <ZButton type="primary" :disabled="scripts.length === 0" @click="openCreateDrawer">创建任务</ZButton>
+        </div>
       </div>
-      <div class="section-heading__actions">
-        <ZTag type="info" size="small">{{ filteredTasks.length }} / {{ tasks.length }}</ZTag>
-        <ZButton type="primary" :disabled="scripts.length === 0" @click="openCreateDrawer">创建任务</ZButton>
+
+      <div class="task-filters" aria-label="任务筛选">
+        <ZInput v-model="search" type="search" placeholder="搜索任务、脚本或备注" clearable />
+        <ZSelect v-model="enabledFilter" :options="enabledOptions" aria-label="启用状态" />
+        <ZSelect v-model="readinessFilter" :options="readinessOptions" aria-label="可运行状态" />
       </div>
     </div>
 
+    <div class="view-body">
     <p v-if="scripts.length === 0 && !loading" class="task-message" role="status">请先创建或导入托管脚本，再创建任务。</p>
-    <div class="task-filters" aria-label="任务筛选">
-      <ZInput v-model="search" type="search" placeholder="搜索任务、脚本或备注" clearable />
-      <ZSelect v-model="enabledFilter" :options="enabledOptions" aria-label="启用状态" />
-      <ZSelect v-model="readinessFilter" :options="readinessOptions" aria-label="可运行状态" />
-    </div>
-
-    <p v-if="loading" class="task-message" role="status">正在加载任务…</p>
+    <p v-else-if="loading" class="task-message" role="status">正在加载任务…</p>
     <div v-else-if="tasks.length === 0" class="empty-state" aria-live="polite">
       <div class="empty-state__mark" aria-hidden="true">T</div>
       <h3>还没有任务</h3>
@@ -606,5 +608,6 @@ watch(
         </div>
       </li>
     </ul>
+    </div>
   </section>
 </template>

@@ -164,7 +164,6 @@ onMounted(loadScripts)
     <div class="section-heading">
       <div>
         <h2 id="scripts-heading">托管脚本</h2>
-        <p>导入后使用独立副本，不持续依赖原始文件路径。</p>
       </div>
       <div class="section-heading__actions">
         <ZButton type="default" @click="openCreateEditor">新建脚本</ZButton>
@@ -172,6 +171,7 @@ onMounted(loadScripts)
       </div>
     </div>
 
+    <div class="view-body">
     <div v-if="scripts.length === 0" class="empty-state">
       <div class="empty-state__mark" aria-hidden="true">S</div>
       <h3>还没有脚本</h3>
@@ -186,5 +186,6 @@ onMounted(loadScripts)
         </div>
       </li>
     </ul>
+    </div>
   </section>
 </template>

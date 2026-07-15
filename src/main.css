@@ -23,9 +23,15 @@ textarea {
   font: inherit;
 }
 
-:where(button, input, select, textarea, [tabindex]):focus-visible {
+:where(button, [tabindex]):focus-visible {
   outline: 3px solid color-mix(in srgb, var(--primary-color) 55%, transparent) !important;
   outline-offset: 3px !important;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
 ::selection {
@@ -35,6 +41,7 @@ textarea {
 .app-shell {
   display: grid;
   grid-template-columns: 224px minmax(0, 1fr);
+  min-width: 800px;
   height: 100vh;
 }
 
@@ -123,14 +130,81 @@ textarea {
 .scheduler-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   color: var(--text-secondary);
   font-size: 12px;
   white-space: nowrap;
 }
 
-.app-sidebar__note {
+.scheduler-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-secondary);
+}
+
+.scheduler-status__dot--success {
+  background: var(--success-color, #22c55e);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color, #22c55e) 22%, transparent);
+}
+
+.scheduler-status__dot--info {
+  background: var(--info-color, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--info-color, #3b82f6) 22%, transparent);
+}
+
+.scheduler-status__dot--danger {
+  background: var(--danger-color, #ef4444);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-color, #ef4444) 22%, transparent);
+}
+
+.scheduler-status__label {
+  flex: 1;
+}
+
+.scheduler-status__hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: help;
+}
+
+.scheduler-status__hint:hover {
+  color: var(--text-color);
+  border-color: var(--text-secondary);
+}
+
+.scheduler-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scheduler-hint__title {
+  margin: 0;
+  color: var(--text-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scheduler-hint__desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scheduler-hint__note {
   margin: 0;
   color: var(--text-secondary);
   font-size: 11px;
@@ -138,14 +212,30 @@ textarea {
 }
 
 .app-main {
+  display: flex;
   min-width: 0;
   min-height: 0;
-  padding: 0 36px 36px;
+  padding: 0 36px;
+  overflow: hidden;
+}
+
+.app-main > * {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.view-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 36px;
   overflow-y: auto;
 }
 
 .environments-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .security-notice {
@@ -194,7 +284,7 @@ textarea {
 
 .history-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(140px, 180px));
+  grid-template-columns: auto repeat(2, 150px);
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -203,11 +293,19 @@ textarea {
 .history-pagination {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 10px;
 }
 
+.history-row__actions {
+  justify-content: flex-start;
+}
+
+.history-row__actions .zt-button--primary {
+  color: #fff !important;
+}
+
 .history-pagination {
+  justify-content: flex-end;
   margin-top: 18px;
 }
 
@@ -243,7 +341,7 @@ textarea {
 }
 
 .history-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .history-list {
@@ -252,11 +350,15 @@ textarea {
   margin: 0;
   padding: 0;
   list-style: none;
+  height: 100%;
+  overflow: auto;
+  margin-bottom: 20px;
+  padding-right: 10px;
 }
 
 .history-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(160px, 1fr) auto minmax(120px, 1fr);
   align-items: center;
   gap: 16px;
   padding: 16px 18px;
@@ -270,7 +372,7 @@ textarea {
   gap: 4px;
 }
 
-.history-row span,
+.history-row > div:first-child span,
 .history-row dt {
   color: var(--text-secondary);
   font-size: 12px;
@@ -300,7 +402,7 @@ textarea {
 }
 
 .runs-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .status-reference {
@@ -351,7 +453,7 @@ textarea {
 }
 
 .backup-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .backup-capability,
@@ -512,7 +614,7 @@ textarea {
 }
 
 .settings-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .interpreter-settings {
@@ -522,7 +624,7 @@ textarea {
 
 .interpreter-row {
   display: grid;
-  grid-template-columns: 150px minmax(240px, 1fr) auto;
+  grid-template-columns: 150px minmax(160px, 420px) auto;
   align-items: center;
   gap: 14px;
   padding: 16px 18px;
@@ -542,7 +644,7 @@ textarea {
 }
 
 .scripts-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .script-row__actions {
@@ -601,6 +703,7 @@ textarea {
 
 .source-editor:focus-visible {
   border-color: var(--primary-color);
+  outline: none !important;
 }
 
 .script-list {
@@ -759,23 +862,42 @@ textarea {
 }
 
 .tasks-view {
-  padding-top: 24px;
+  padding-top: 0;
 }
 
 .section-heading {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 20px;
+  padding: 24px 0 20px;
+}
+
+.view-toolbar {
+  flex: 0 0 auto;
+  padding-top: 24px;
+  padding-bottom: 20px;
+}
+
+.view-toolbar .section-heading {
+  padding-bottom: 8px;
+}
+
+.view-toolbar .task-filters,
+.view-toolbar .history-filters {
+  margin-bottom: 0;
 }
 
 .section-heading h2,
 .empty-state h3 {
-  margin: 0 0 8px;
+  margin: 0;
 }
 
-.section-heading p,
+.section-heading p {
+  display: none;
+}
+
 .task-row p,
 .task-message {
   margin: 0;
@@ -784,7 +906,7 @@ textarea {
 
 .task-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 180px 200px;
+  grid-template-columns: auto 150px 150px;
   gap: 12px;
   margin-bottom: 20px;
 }

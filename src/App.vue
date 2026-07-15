@@ -185,19 +185,9 @@ watch(
   }
 )
 
-/**
- * 展示调度生命周期确认流程；用户确认后通过通知记录其已理解当前 MVP 的限制。
- */
-async function acknowledgeSchedulerNotice(event: MouseEvent) {
-  confirmTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
-  const accepted = await confirm({
-    title: '调度生命周期说明',
-    message: '定时任务仅在 Scripty 插件存活期间调度。插件进程终止或 ZTools 退出后，调度将停止。',
-    type: 'warning',
-    confirmText: '我知道了',
-    cancelText: '稍后确认'
-  })
-  if (accepted) success('已确认调度生命周期限制')
+/** Synchronizes the toast visible state when the component emits a close event. */
+function handleToastVisibleChange(visible: boolean) {
+  toastState.value.visible = visible
 }
 
 /** Routes child-view operation feedback through the single application-level ztools-ui toast. */
@@ -209,7 +199,7 @@ function showFeedback(type: 'success' | 'error', message: string) {
 
 <template>
   <div class="app-shell">
-    <ZToast v-bind="toastState" />
+    <ZToast v-bind="toastState" @update:visible="handleToastVisibleChange" />
     <ZConfirmDialog
       v-bind="confirmState"
       @confirm="handleConfirm"
@@ -245,13 +235,27 @@ function showFeedback(type: 'success' | 'error', message: string) {
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          :title="schedulerStatusView.description"
         >
-          <span>调度器</span>
-          <ZTag :type="schedulerStatusView.type" size="small" round>{{ schedulerStatusView.label }}</ZTag>
+          <span
+            :class="['scheduler-status__dot', `scheduler-status__dot--${schedulerStatusView.type}`]"
+            aria-hidden="true"
+          ></span>
+          <span class="scheduler-status__label">调度器</span>
+          <ZPopover placement="top" :show-arrow="true" class="scheduler-status__popover">
+            <template #trigger>
+              <button
+                type="button"
+                class="scheduler-status__hint"
+                :aria-label="`调度状态：${schedulerStatusView.label}`"
+              >?</button>
+            </template>
+            <div class="scheduler-hint">
+              <p class="scheduler-hint__title">{{ schedulerStatusView.label }}</p>
+              <p class="scheduler-hint__desc">{{ schedulerStatusView.description }}</p>
+              <p class="scheduler-hint__note">定时任务仅在 Scripty 插件存活期间调度，插件进程终止或 ZTools 退出后调度将停止。数据保存在当前设备。</p>
+            </div>
+          </ZPopover>
         </div>
-        <ZButton size="small" type="default" @click="acknowledgeSchedulerNotice">调度说明</ZButton>
-        <p class="app-sidebar__note">数据保存在当前设备，仅在插件存活期间调度</p>
       </div>
     </aside>
 
@@ -283,9 +287,6 @@ function showFeedback(type: 'success' | 'error', message: string) {
         <div class="empty-state__mark" aria-hidden="true">S</div>
         <h2>{{ currentSection.title }}</h2>
         <p>{{ currentSection.description }}</p>
-        <ZButton type="primary" @click="acknowledgeSchedulerNotice">
-          了解调度限制
-        </ZButton>
       </section>
     </main>
   </div>

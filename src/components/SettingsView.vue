@@ -61,7 +61,7 @@ onMounted(loadSettings)
 <template>
   <section class="settings-view" aria-labelledby="settings-heading">
     <div class="section-heading">
-      <div><h2 id="settings-heading">解释器设置</h2><p>设备相关路径不会进入跨设备导出包。</p></div>
+      <div><h2 id="settings-heading">解释器设置</h2></div>
       <ZButton type="primary" :disabled="!settings" @click="saveSettings">保存设置</ZButton>
     </div>
     <div v-if="settings" class="interpreter-settings">

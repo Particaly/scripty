@@ -94,7 +94,7 @@ onBeforeUnmount(() => { mounted = false; unsubscribe?.(); unsubscribe = null })
 
 <template>
   <section class="runs-view" aria-labelledby="runs-heading">
-    <div class="section-heading"><div><h2 id="runs-heading">运行中任务</h2><p>stdout 与 stderr 按到达顺序实时传输，并分别保留查看。</p></div><ZTag type="info">{{ runs.length }} 个运行</ZTag></div>
+    <div class="section-heading"><div><h2 id="runs-heading">运行中任务</h2></div><ZTag type="info">{{ runs.length }} 个运行</ZTag></div>
     <RunStatusReference />
     <div v-if="runs.length === 0" class="empty-state"><div class="empty-state__mark">R</div><h3>当前没有运行中的任务</h3><p>从任务库启动任务后，可在这里查看实时输出。</p></div>
     <div v-else class="live-runs">

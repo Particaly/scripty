@@ -197,7 +197,6 @@ onBeforeUnmount(() => {
     <div class="section-heading">
       <div>
         <h2 id="backup-heading">备份与迁移</h2>
-        <p>选择导出范围并基于当前本地数据生成预览，再保存为跨设备 ZIP 备份包。</p>
       </div>
       <ZButton type="primary" :loading="operation === 'preview'" :disabled="!previewAvailable || operation !== null" @click="generatePreview">
         生成导出预览
