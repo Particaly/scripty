@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
-const { calculateSha256, createManagedScriptFileName } = require('./file-repositories')
+const { calculateSha256, createManagedScriptFileName, createManagedScriptPath } = require('./file-repositories')
 const { CURRENT_SCHEMA_VERSION, RepositoryError, atomicWriteJson, mapFileSystemError } = require('./metadata-repository')
 
 const PORTABLE_INTERPRETER_DEFAULTS = {
@@ -63,9 +63,31 @@ function validateImportTarget(target) {
   }
 }
 
+/** Converts portable UUID-file scripts into collision-free local real paths while preserving same-ID paths. */
+function materializeScripts(importedScripts, localScripts) {
+  const localById = new Map(localScripts.map(script => [script.id, script]))
+  const used = new Set(localScripts.map(script => script.relativePath?.toLocaleLowerCase()).filter(Boolean))
+  return importedScripts.map(script => {
+    const local = localById.get(script.id)
+    let relativePath = local?.relativePath ?? createManagedScriptPath(script.name, script.language, script.id)
+    let counter = 0
+    while (!local && used.has(relativePath.toLocaleLowerCase())) {
+      counter += 1
+      const dot = relativePath.lastIndexOf('.')
+      relativePath = `${relativePath.slice(0, dot)}-${script.id.slice(0, 8)}${counter > 1 ? `-${counter}` : ''}${relativePath.slice(dot)}`
+    }
+    used.add(relativePath.toLocaleLowerCase())
+    const { managedFileName, ...portable } = structuredClone(script)
+    return { ...portable, relativePath }
+  })
+}
+
 /** Builds the complete merge or overwrite target while preserving device fields and omitted secret values. */
 function buildImportTarget(snapshot, current, mode) {
   if (!['merge', 'overwrite'].includes(mode)) throw new RepositoryError('VALIDATION_ERROR', '导入模式无效')
+  const importedScripts = materializeScripts(snapshot.documents.scripts.data, current.scripts)
+  const importedFolders = structuredClone(snapshot.documents.scriptFolders?.data ?? [])
+  const importedDependencies = structuredClone(snapshot.documents.dependencies?.data ?? [])
   const importedTasks = materializeTasks(snapshot.documents.tasks.data, current.tasks, current.settings.defaultInterpreters)
   const importedEnvironments = materializeEnvironments(snapshot.documents.environments.data, current.environments)
   const importedSettings = {
@@ -77,13 +99,17 @@ function buildImportTarget(snapshot, current, mode) {
   }
   const target = mode === 'merge'
     ? {
-        scripts: mergeById(current.scripts, snapshot.documents.scripts.data),
+        scripts: mergeById(current.scripts, importedScripts),
+        scriptFolders: mergeById(current.scriptFolders ?? [], importedFolders),
+        dependencies: mergeById(current.dependencies ?? [], importedDependencies),
         tasks: mergeById(current.tasks, importedTasks),
         environments: mergeById(current.environments, importedEnvironments),
         settings: importedSettings
       }
     : {
-        scripts: structuredClone(snapshot.documents.scripts.data),
+        scripts: importedScripts,
+        scriptFolders: importedFolders,
+        dependencies: importedDependencies,
         tasks: importedTasks,
         environments: importedEnvironments,
         settings: importedSettings
@@ -136,6 +162,7 @@ function commitImportTarget(root, snapshot, target) {
   try {
     fs.mkdirSync(targetData, { recursive: true, mode: 0o700 })
     fs.mkdirSync(targetScripts, { recursive: true, mode: 0o700 })
+    for (const folder of target.scriptFolders ?? []) fs.mkdirSync(path.join(targetScripts, ...folder.relativePath.split('/')), { recursive: true, mode: 0o700 })
     fs.cpSync(path.join(root, 'data'), targetData, { recursive: true, force: true })
     for (const [name, data] of Object.entries(target)) {
       if (name !== 'settings') atomicWriteJson(path.join(targetData, `${name}.json`), { schemaVersion: CURRENT_SCHEMA_VERSION, data })
@@ -146,10 +173,12 @@ function commitImportTarget(root, snapshot, target) {
       const fileName = createManagedScriptFileName(script.id, script.language)
       const source = importedIds.has(script.id)
         ? path.join(snapshot.temporaryDirectory, 'scripts', fileName)
-        : path.join(root, 'scripts', fileName)
+        : path.join(root, 'scripts', ...script.relativePath.split('/'))
       const content = fs.readFileSync(source)
       if (calculateSha256(content) !== script.contentHash) throw new RepositoryError('HASH_MISMATCH', '提交前脚本内容哈希校验失败')
-      fs.writeFileSync(path.join(targetScripts, fileName), content, { flag: 'wx', mode: 0o600 })
+      const targetPath = path.join(targetScripts, ...script.relativePath.split('/'))
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true, mode: 0o700 })
+      fs.writeFileSync(targetPath, content, { flag: 'wx', mode: 0o600 })
     }
     writeDescriptor(transactionDirectory, descriptor)
     fs.renameSync(path.join(root, 'data'), path.join(transactionDirectory, 'rollback-data'))

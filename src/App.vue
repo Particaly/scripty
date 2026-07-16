@@ -8,6 +8,7 @@ import RunsView from './components/RunsView.vue'
 import HistoryView from './components/HistoryView.vue'
 import EnvironmentsView from './components/EnvironmentsView.vue'
 import BackupView from './components/BackupView.vue'
+import DependenciesView from './components/DependenciesView.vue'
 import {
   RUN_TASK_FEATURE,
   buildRunnableTaskCandidates,
@@ -19,6 +20,7 @@ import type { SchedulerStatus } from './types/api'
 const sections = [
   { id: 'tasks', label: '任务', title: '还没有任务', description: '创建任务后，可在这里管理运行方式、Cron 和启用状态。' },
   { id: 'scripts', label: '脚本', title: '还没有脚本', description: '新建或导入本地脚本后，源码副本将由 Scripty 托管。' },
+  { id: 'dependencies', label: '依赖', title: '还没有依赖', description: '在这里管理所有脚本共享的 Node.js 与 Python 直接依赖。' },
   { id: 'environments', label: '环境变量', title: '还没有环境变量', description: '在这里维护任务运行时需要注入的全局变量和任务变量。' },
   { id: 'running', label: '运行中', title: '暂无运行记录', description: '任务执行后，可在这里查看实时输出。' },
   { id: 'history', label: '运行历史', title: '暂无运行记录', description: '任务执行后，可在这里查看状态、耗时、退出码和日志。' },
@@ -267,7 +269,9 @@ function showFeedback(type: 'success' | 'error', message: string) {
         @feedback="showFeedback"
       />
 
-      <ScriptsView v-else-if="activeSection === 'scripts'" @feedback="showFeedback" />
+      <ScriptsView v-else-if="activeSection === 'scripts'" :request-confirmation="confirm" @feedback="showFeedback" />
+
+      <DependenciesView v-else-if="activeSection === 'dependencies'" :request-confirmation="confirm" @feedback="showFeedback" />
 
       <EnvironmentsView v-else-if="activeSection === 'environments'" :request-confirmation="confirm" @feedback="showFeedback" />
 
@@ -291,3 +295,217 @@ function showFeedback(type: 'success' | 'error', message: string) {
     </main>
   </div>
 </template>
+
+<style scoped lang="scss">
+.app-shell {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-width: 800px;
+  height: 100vh;
+}
+
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 20px 14px;
+  border-right: 1px solid var(--divider-color);
+  background: var(--card-bg);
+}
+
+.app-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px 16px;
+  border-bottom: 1px solid var(--divider-color);
+}
+
+.app-sidebar__mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--primary-light-bg);
+  color: var(--primary-color);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.app-sidebar__title h1 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.app-sidebar__title p {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.app-nav {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  /* horizontal padding reserves room for the focus ring on nav buttons,
+     otherwise `overflow-y: auto` clips the ring on the left/right edges. */
+  padding: 14px 8px;
+  overflow-y: auto;
+}
+
+.app-nav__item {
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.app-nav__item:hover {
+  background: var(--hover-bg);
+}
+
+.app-nav__item--active {
+  background: var(--primary-light-bg);
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.app-sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider-color);
+}
+
+.scheduler-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scheduler-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-secondary);
+}
+
+.scheduler-status__dot--success {
+  background: var(--success-color, #22c55e);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-color, #22c55e) 22%, transparent);
+}
+
+.scheduler-status__dot--info {
+  background: var(--info-color, #3b82f6);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--info-color, #3b82f6) 22%, transparent);
+}
+
+.scheduler-status__dot--danger {
+  background: var(--danger-color, #ef4444);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-color, #ef4444) 22%, transparent);
+}
+
+.scheduler-status__label {
+  flex: 1;
+}
+
+.scheduler-status__hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: help;
+}
+
+.scheduler-status__hint:hover {
+  color: var(--text-color);
+  border-color: var(--text-secondary);
+}
+
+.scheduler-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scheduler-hint__title {
+  margin: 0;
+  color: var(--text-color);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scheduler-hint__desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scheduler-hint__note {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.app-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 36px;
+  overflow: hidden;
+}
+
+/* Scoped styles reach child component root elements (each view's root) via Vue's
+   default behavior of stamping the scope id on child roots, so this stays effective. */
+.app-main > * {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  /* Reserves room for the focus ring/glow painted outside ztools-ui control
+     borders. `overflow: hidden` would otherwise clip it on toolbar controls
+     sitting near the view root's top/left/right edges. */
+  padding: 8px;
+  overflow: hidden;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .app-sidebar {
+    padding: 16px 10px;
+  }
+
+  .app-main {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+}
+</style>

@@ -4,9 +4,11 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 
-const CURRENT_SCHEMA_VERSION = 1
+const CURRENT_SCHEMA_VERSION = 2
 const METADATA_FILES = Object.freeze({
   scripts: 'scripts.json',
+  scriptFolders: 'script-folders.json',
+  dependencies: 'dependencies.json',
   tasks: 'tasks.json',
   environments: 'environments.json',
   runRecords: 'run-records.json',

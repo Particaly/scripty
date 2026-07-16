@@ -127,3 +127,53 @@ onMounted(loadData)
     <ul v-else class="environment-list"><li v-for="variable in variables" :key="variable.id" class="environment-row"><div><strong>{{ variable.name }}</strong><p>{{ revealedValues[variable.id] ?? variable.maskedValue }}</p><span>{{ variable.note || '暂无备注' }}</span></div><div class="environment-tags"><ZTag>{{ variable.scope === 'global' ? '全局' : '任务' }}</ZTag><ZTag v-if="variable.sensitive" type="warning">敏感</ZTag></div><div class="task-row__actions"><ZSwitch :model-value="variable.enabled" :aria-label="`${variable.enabled ? '禁用' : '启用'}变量 ${variable.name}`" @update:model-value="(enabled) => setEnabled(variable, enabled)" /><ZButton v-if="variable.sensitive" type="text" @click="revealVariable(variable)">查看</ZButton><ZButton type="text" @click="copyVariable(variable)">复制</ZButton><ZButton type="text" @click="editVariable(variable)">编辑</ZButton><ZButton type="danger" @click="removeVariable(variable)">删除</ZButton></div></li></ul>
   </section>
 </template>
+
+<style scoped lang="scss">
+.environments-view {
+  padding-top: 0;
+}
+
+.security-notice {
+  max-width: 680px;
+  margin-top: 10px !important;
+  padding: 9px 12px;
+  border-left: 3px solid var(--warning-color);
+  background: var(--warning-light-bg);
+  line-height: 1.6;
+}
+
+.environment-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.environment-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.environment-row span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.environment-tags {
+  display: flex;
+  gap: 6px;
+}
+
+.environment-row p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+</style>

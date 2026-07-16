@@ -326,3 +326,126 @@ onBeforeUnmount(() => {
     </section>
   </section>
 </template>
+
+<style scoped lang="scss">
+.backup-view {
+  padding-top: 0;
+}
+
+.backup-capability,
+.backup-risk {
+  margin: 0 0 18px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--info-light-bg);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.backup-risk {
+  border-left: 3px solid var(--warning-color);
+  background: var(--warning-light-bg);
+}
+
+.backup-options {
+  display: grid;
+  gap: 14px;
+  margin: 0 0 18px;
+  padding: 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.backup-options legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.backup-options__nested {
+  display: grid;
+  gap: 12px;
+  padding-left: 26px;
+}
+
+.backup-preview,
+.backup-result {
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.backup-result {
+  margin-top: 18px;
+}
+
+.backup-warnings {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.backup-preview__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.backup-result__risk {
+  margin: 18px 0 0;
+  color: var(--text-color);
+}
+
+.backup-result__safe {
+  margin: 18px 0 0;
+  color: var(--text-secondary);
+}
+
+.backup-result :deep(.backup-preview__heading p) {
+  overflow-wrap: anywhere;
+}
+
+.backup-import {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px 20px;
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.backup-import h3,
+.backup-import p {
+  margin: 0;
+}
+
+.backup-import > div p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+
+.backup-import__status,
+.backup-import__preview {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.backup-import__modes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.backup-import__mode-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 18px 0;
+}
+</style>

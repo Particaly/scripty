@@ -113,3 +113,49 @@ onBeforeUnmount(() => { mounted = false; unsubscribe?.(); unsubscribe = null })
     </div>
   </section>
 </template>
+
+<style scoped lang="scss">
+.runs-view {
+  padding-top: 0;
+}
+
+.run-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.run-summary span:nth-last-child(2) {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.live-runs {
+  display: grid;
+  gap: 18px;
+}
+
+.live-log {
+  min-height: 320px;
+  max-height: 480px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--card-bg);
+  color: var(--text-color);
+  font: 13px/1.6 "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.live-log--error {
+  color: var(--error-color);
+}
+</style>

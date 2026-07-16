@@ -1,5 +1,5 @@
-export const DATA_SCHEMA_VERSION = 1 as const
-export const EXPORT_FORMAT_VERSION = '1.0' as const
+export const DATA_SCHEMA_VERSION = 2 as const
+export const EXPORT_FORMAT_VERSION = '1.1' as const
 
 export type EntityId = string
 export type IsoDateTime = string
@@ -30,10 +30,24 @@ export interface TimestampedEntity {
 export interface Script extends TimestampedEntity {
   id: EntityId
   name: string
-  managedFileName: string
+  relativePath: string
   language: ScriptLanguage
   contentHash: string
   note: string
+}
+
+export interface ScriptFolder extends TimestampedEntity {
+  id: EntityId
+  relativePath: string
+}
+
+export type DependencyKind = 'node' | 'python'
+
+export interface Dependency extends TimestampedEntity {
+  id: EntityId
+  kind: DependencyKind
+  name: string
+  versionSpec: string
 }
 
 export interface InterpreterConfig {
@@ -103,6 +117,8 @@ export interface RunRecord {
 
 export interface ExportEntityCounts {
   scripts: number
+  scriptFolders: number
+  dependencies: number
   tasks: number
   environments: number
 }
@@ -128,10 +144,9 @@ export interface ExportManifest {
   files: ExportFileEntry[]
 }
 
-export type ExportScript = Pick<
-  Script,
-  'id' | 'name' | 'managedFileName' | 'language' | 'contentHash' | 'note' | 'createdAt' | 'updatedAt'
->
+export interface ExportScript extends Script {
+  managedFileName: string
+}
 
 export interface ExportInterpreterConfig {
   kind: ScriptLanguage
@@ -171,6 +186,8 @@ export interface ExportEnvironmentVariable extends Pick<
 
 export interface ExportPackageData {
   scripts: VersionedData<ExportScript[]>
+  scriptFolders: VersionedData<ScriptFolder[]>
+  dependencies: VersionedData<Dependency[]>
   tasks: VersionedData<ExportTask[]>
   environments: VersionedData<ExportEnvironmentVariable[]>
   settings: VersionedData<ExportSettings>

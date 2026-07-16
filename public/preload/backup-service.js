@@ -36,6 +36,7 @@ function createBackupPreviewStore(options = {}) {
     preview.timer = setTimer(() => {
       if (activePreview?.token === token) activePreview = null
     }, delay)
+    preview.timer?.unref?.()
     activePreview = preview
   }
 
@@ -85,6 +86,7 @@ function createImportValidationStore(options = {}) {
     validation.timer = setTimer(() => {
       if (activeValidation?.token === token) clear()
     }, Math.max(0, expiresAt - now()))
+    validation.timer?.unref?.()
     activeValidation = validation
   }
 
@@ -111,9 +113,17 @@ function createImportValidationStore(options = {}) {
 
 /** Projects local entities onto protocol-owned fields before comparing them with validated package data. */
 function projectLocalEntity(kind, entity, manifest) {
+  if (kind === 'scriptFolders') {
+    const { id, relativePath, createdAt, updatedAt } = entity
+    return { id, relativePath, createdAt, updatedAt }
+  }
+  if (kind === 'dependencies') {
+    const { id, kind: dependencyKind, name, versionSpec, createdAt, updatedAt } = entity
+    return { id, kind: dependencyKind, name, versionSpec, createdAt, updatedAt }
+  }
   if (kind === 'scripts') {
-    const { id, name, managedFileName, language, contentHash, note, createdAt, updatedAt } = entity
-    return { id, name, managedFileName, language, contentHash, note, createdAt, updatedAt }
+    const { id, name, managedFileName, relativePath, language, contentHash, note, createdAt, updatedAt } = entity
+    return { id, name, managedFileName, relativePath, language, contentHash, note, createdAt, updatedAt }
   }
   if (kind === 'tasks') {
     const { id, name, note, scriptId, args, cron, timeoutMs, enabled, concurrency, createdAt, updatedAt } = entity
@@ -138,7 +148,11 @@ function projectLocalSettings(settings) {
 function createDisplayConflictKey(kind, entity) {
   return kind === 'environments'
     ? `${entity.scope}\0${entity.taskId ?? ''}\0${entity.name}`
-    : entity.name
+    : kind === 'scriptFolders'
+      ? entity.relativePath
+      : kind === 'dependencies'
+        ? `${entity.kind}:${entity.name}`
+        : entity.name
 }
 
 /** Computes one entity collection's merge and overwrite actions using stable IDs as the only identity key. */
@@ -181,7 +195,10 @@ function totalImportChanges(groups) {
 /** Builds a renderer-safe package summary and both import-mode previews from a validated private snapshot. */
 function createImportPreview(snapshot, localEnvelopes, validationToken, expiresAt) {
   const comparisons = {}
-  for (const kind of ['scripts', 'tasks', 'environments']) {
+  const comparableKinds = ['scripts', 'tasks', 'environments']
+  if (snapshot.documents.scriptFolders && localEnvelopes.scriptFolders) comparableKinds.push('scriptFolders')
+  if (snapshot.documents.dependencies && localEnvelopes.dependencies) comparableKinds.push('dependencies')
+  for (const kind of comparableKinds) {
     comparisons[kind] = compareImportEntities(kind, snapshot.documents[kind].data, localEnvelopes[kind].data, snapshot.manifest)
   }
   const settingsEqual = isDeepStrictEqual(snapshot.documents.settings.data, projectLocalSettings(localEnvelopes.settings.data))
@@ -269,11 +286,13 @@ function createBackupsApi(metadataRepository, managedScriptRepository, options =
           options: input,
           envelopes: {
             scripts: metadataRepository.readEnvelope('scripts'),
+            scriptFolders: metadataRepository.readEnvelope('scriptFolders'),
+            dependencies: metadataRepository.readEnvelope('dependencies'),
             tasks: metadataRepository.readEnvelope('tasks'),
             environments: metadataRepository.readEnvelope('environments'),
             settings: metadataRepository.readEnvelope('settings')
           },
-          readScriptContent: (script) => managedScriptRepository.read(script.id, script.language)
+          readScriptContent: (script) => managedScriptRepository.read(script, script.language)
         })
         const token = createToken()
         const expiresAt = now() + EXPORT_PREVIEW_TTL_MS
@@ -329,6 +348,8 @@ function createBackupsApi(metadataRepository, managedScriptRepository, options =
         try {
           return createImportPreview(snapshot, {
             scripts: metadataRepository.readEnvelope('scripts'),
+            scriptFolders: metadataRepository.readEnvelope('scriptFolders'),
+            dependencies: metadataRepository.readEnvelope('dependencies'),
             tasks: metadataRepository.readEnvelope('tasks'),
             environments: metadataRepository.readEnvelope('environments'),
             settings: metadataRepository.readEnvelope('settings')
@@ -358,6 +379,8 @@ function createBackupsApi(metadataRepository, managedScriptRepository, options =
         try {
           const current = {
             scripts: metadataRepository.read('scripts'),
+            scriptFolders: metadataRepository.read('scriptFolders'),
+            dependencies: metadataRepository.read('dependencies'),
             tasks: metadataRepository.read('tasks'),
             environments: metadataRepository.read('environments'),
             settings: metadataRepository.read('settings')
@@ -372,7 +395,7 @@ function createBackupsApi(metadataRepository, managedScriptRepository, options =
           }
           scheduler.commitSnapshot(scheduleChange)
           const changes = createImportPreview(snapshot, {
-            scripts: { data: current.scripts }, tasks: { data: current.tasks },
+            scripts: { data: current.scripts }, scriptFolders: { data: current.scriptFolders }, dependencies: { data: current.dependencies }, tasks: { data: current.tasks },
             environments: { data: current.environments }, settings: { data: current.settings }
           }, validationToken, now())[input.mode]
           return { mode: input.mode, changes, warnings: ['设备本地解释器、工作目录和未包含的环境变量值已按本机配置保留。'] }

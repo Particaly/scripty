@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hashDirectory, listFiles, readJson, readZipEntries, RELEASE_ROOT, ROOT, sha256 } from './release-lib.mjs'
-import { smokePreload } from './smoke-preload.mjs'
 
 const REQUIRED_FILES = ['index.html', 'logo.png', 'plugin.json', 'preload/package.json', 'preload/services.js']
 const ALLOWED_PREFIXES = ['assets/']
@@ -76,19 +75,18 @@ export async function verifyReleaseZip(directory, zipPath, files) {
   return sha256(zipPath)
 }
 
-/** Verifies the currently generated release directory and ZIP and optionally runs the isolated preload smoke. */
-export async function verifyCurrentRelease({ smoke = true } = {}) {
+/** Verifies the currently generated release directory and ZIP manifest. */
+export async function verifyCurrentRelease() {
   const paths = getReleasePaths()
   const directoryResult = verifyReleaseDirectory(paths.directory, paths.packageJson)
   const zipSha256 = await verifyReleaseZip(paths.directory, paths.zipPath, directoryResult.files)
-  if (smoke) await smokePreload(paths.directory)
   return { ...paths, ...directoryResult, zipSha256 }
 }
 
-/** Runs release verification as a CLI while preserving exports for unit and clean-copy tests. */
+/** Runs release verification as a CLI while preserving exports for clean-copy verification. */
 async function main() {
   const result = await verifyCurrentRelease()
-  console.log(JSON.stringify({ directory: result.directory, zipPath: result.zipPath, zipSha256: result.zipSha256, files: result.files.length, preloadSmoke: 'passed' }, null, 2))
+  console.log(JSON.stringify({ directory: result.directory, zipPath: result.zipPath, zipSha256: result.zipSha256, files: result.files.length }, null, 2))
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main()

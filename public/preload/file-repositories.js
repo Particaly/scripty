@@ -6,6 +6,8 @@ const { createHash, randomUUID } = require('node:crypto')
 const { RepositoryError } = require('./metadata-repository')
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const WINDOWS_RESERVED_NAME_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
+const RESERVED_SCRIPT_ROOT_NAMES = new Set(['package.json', 'package-lock.json', 'requirements.txt', 'node_modules', '.venv', '.transactions'])
 const SCRIPT_EXTENSIONS = Object.freeze({
   javascript: 'js',
   python: 'py',
@@ -15,6 +17,26 @@ const SCRIPT_EXTENSIONS = Object.freeze({
 const DEFAULT_MAX_SCRIPT_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_LOG_CHUNK_BYTES = 256 * 1024
 
+/** Validates a canonical managed folder path without requiring a script extension. */
+function normalizeManagedFolderPath(relativePath, allowRoot = false) {
+  if (allowRoot && (relativePath === '' || relativePath === null || relativePath === undefined)) return ''
+  if (typeof relativePath !== 'string' || !relativePath.trim() || relativePath.includes('\0') || relativePath.includes('\\')) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '目录路径必须是使用 / 分隔的相对路径')
+  }
+  const normalized = path.posix.normalize(relativePath.trim())
+  const segments = normalized.split('/')
+  if (path.posix.isAbsolute(normalized) || /^[A-Za-z]:/.test(normalized) || segments.some(segment => !segment || segment === '.' || segment === '..')) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '目录路径不能离开托管目录')
+  }
+  if (segments.some(segment => WINDOWS_RESERVED_NAME_PATTERN.test(segment) || /[. ]$/.test(segment) || /[<>:"|?*\x00-\x1f]/.test(segment))) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '目录路径包含系统保留字符或名称')
+  }
+  if (RESERVED_SCRIPT_ROOT_NAMES.has(segments[0].toLocaleLowerCase())) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '目录路径与 Scripty 保留目录冲突')
+  }
+  return normalized
+}
+
 /** Rejects identifiers that could escape a fixed repository through path fragments. */
 function assertEntityId(id, label) {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
@@ -22,7 +44,65 @@ function assertEntityId(id, label) {
   }
 }
 
-/** Converts one supported language and script ID into the only permitted managed filename. */
+/** Validates a canonical relative script path and prevents dependency or parent-directory traversal. */
+function normalizeManagedScriptPath(relativePath, language) {
+  if (typeof relativePath !== 'string' || !relativePath.trim() || relativePath.includes('\0') || relativePath.includes('\\')) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径必须是使用 / 分隔的相对路径')
+  }
+  const normalized = path.posix.normalize(relativePath.trim())
+  const segments = normalized.split('/')
+  if (path.posix.isAbsolute(normalized) || /^[A-Za-z]:/.test(normalized) || segments.some(segment => !segment || segment === '.' || segment === '..')) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径不能离开托管目录')
+  }
+  if (segments.some(segment => WINDOWS_RESERVED_NAME_PATTERN.test(segment) || /[. ]$/.test(segment) || /[<>:"|?*\x00-\x1f]/.test(segment))) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径包含系统保留字符或名称')
+  }
+  if (RESERVED_SCRIPT_ROOT_NAMES.has(segments[0].toLocaleLowerCase())) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径与依赖环境目录冲突')
+  }
+  const extension = path.posix.extname(normalized).slice(1).toLocaleLowerCase()
+  const allowedExtensions = language === 'javascript' ? ['js', 'mjs', 'cjs'] : [SCRIPT_EXTENSIONS[language]]
+  if (!allowedExtensions.includes(extension)) throw new RepositoryError('VALIDATION_ERROR', '脚本扩展名与语言不匹配')
+  return normalized
+}
+
+/** Creates a readable path from the script name while retaining the language's conventional extension. */
+function createManagedScriptPath(name, language, fallbackId = randomUUID()) {
+  const extension = SCRIPT_EXTENSIONS[language]
+  if (!extension) throw new RepositoryError('VALIDATION_ERROR', '不支持的脚本语言')
+  const source = typeof name === 'string' ? name.trim().replace(/\.(?:js|mjs|cjs|py|ps1|sh)$/i, '') : ''
+  const baseName = source
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 80) || `script-${String(fallbackId).slice(0, 8)}`
+  return normalizeManagedScriptPath(`${baseName}.${extension}`, language)
+}
+
+/** Resolves a canonical relative path below the scripts root and rejects symlinked ancestors. */
+function resolveManagedScriptPath(scriptsDirectory, relativePath, language, allowMissingLeaf = true) {
+  const normalized = normalizeManagedScriptPath(relativePath, language)
+  const target = path.join(scriptsDirectory, ...normalized.split('/'))
+  const relative = path.relative(scriptsDirectory, target)
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径不能离开托管目录')
+  }
+  let current = scriptsDirectory
+  const segments = normalized.split('/')
+  for (let index = 0; index < segments.length - (allowMissingLeaf ? 1 : 0); index += 1) {
+    current = path.join(current, segments[index])
+    if (!fs.existsSync(current)) {
+      if (allowMissingLeaf) break
+      throw new RepositoryError('SCRIPT_MISSING', '托管脚本不存在')
+    }
+    const stat = fs.lstatSync(current)
+    if (stat.isSymbolicLink() || (index < segments.length - 1 && !stat.isDirectory())) {
+      throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径不能经过符号链接或普通文件')
+    }
+  }
+  return { normalized, target }
+}
+
+/** Converts one supported language and script ID into the legacy backup filename. */
 function createManagedScriptFileName(scriptId, language) {
   assertEntityId(scriptId, '脚本 ID')
   const extension = SCRIPT_EXTENSIONS[language]
@@ -99,7 +179,7 @@ class ManagedScriptRepository {
     this.maxScriptBytes = maxScriptBytes
   }
 
-  /** Creates the managed scripts directory without touching existing source files. */
+  /** Creates the managed scripts directory without touching existing source files or recovery state. */
   initialize() {
     try {
       fs.mkdirSync(this.scriptsDirectory, { recursive: true })
@@ -108,13 +188,78 @@ class ManagedScriptRepository {
     }
   }
 
-  /** Resolves a script to its controlled path after regenerating the filename from ID and language. */
-  getFilePath(scriptId, language) {
-    return path.join(this.scriptsDirectory, createManagedScriptFileName(scriptId, language))
+  /** Migrates legacy UUID files into readable paths and clears markers only after verified cleanup. */
+  migrateLegacyFiles(metadataRepository) {
+    let scripts = metadataRepository.read('scripts')
+    if (scripts.some(script => !script.relativePath)) {
+      const used = new Set()
+      scripts = [...scripts].sort((left, right) => left.id.localeCompare(right.id)).map(script => {
+        let relativePath = createManagedScriptPath(script.name, script.language, script.id)
+        let counter = 0
+        while (used.has(relativePath.toLocaleLowerCase())) {
+          counter += 1
+          const dot = relativePath.lastIndexOf('.')
+          relativePath = `${relativePath.slice(0, dot)}-${script.id.slice(0, 8)}${counter > 1 ? `-${counter}` : ''}${relativePath.slice(dot)}`
+        }
+        used.add(relativePath.toLocaleLowerCase())
+        return {
+          ...script,
+          relativePath,
+          legacyManagedFileName: script.managedFileName ?? createManagedScriptFileName(script.id, script.language)
+        }
+      }).sort((left, right) => metadataRepository.read('scripts').findIndex(item => item.id === left.id) - metadataRepository.read('scripts').findIndex(item => item.id === right.id))
+      metadataRepository.write('scripts', scripts)
+    }
+    let nextScripts = scripts.slice()
+    for (const script of scripts) {
+      if (!script.legacyManagedFileName) continue
+      const legacyPath = path.join(this.scriptsDirectory, script.legacyManagedFileName)
+      const targetPath = this.getFilePath(script, script.language)
+      try {
+        if (path.resolve(legacyPath) === path.resolve(targetPath)) {
+          if (!fs.existsSync(targetPath) || calculateSha256(fs.readFileSync(targetPath)) !== script.contentHash) {
+            throw new RepositoryError('MIGRATION_FAILED', '托管脚本内容与元数据不一致')
+          }
+        } else if (fs.existsSync(targetPath)) {
+          const targetContent = fs.readFileSync(targetPath)
+          if (calculateSha256(targetContent) !== script.contentHash) {
+            throw new RepositoryError('MIGRATION_FAILED', `脚本路径 ${script.relativePath} 已存在不同内容`)
+          }
+        } else if (fs.existsSync(legacyPath)) {
+          fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+          fs.copyFileSync(legacyPath, targetPath, fs.constants.COPYFILE_EXCL)
+          if (calculateSha256(fs.readFileSync(targetPath)) !== script.contentHash) {
+            fs.rmSync(targetPath, { force: true })
+            throw new RepositoryError('MIGRATION_FAILED', '脚本文件迁移后哈希不一致')
+          }
+        } else {
+          throw new RepositoryError('MIGRATION_FAILED', '旧版托管脚本文件缺失')
+        }
+        if (path.resolve(legacyPath) !== path.resolve(targetPath)) fs.rmSync(legacyPath, { force: true })
+        nextScripts = nextScripts.map(item => {
+          if (item.id !== script.id) return item
+          const { managedFileName, legacyManagedFileName, ...migrated } = item
+          return migrated
+        })
+        metadataRepository.write('scripts', nextScripts)
+      } catch (error) {
+        if (error instanceof RepositoryError) throw error
+        throw mapFileError(error, 'MIGRATION_FAILED', '无法迁移旧版脚本文件')
+      }
+    }
+    return nextScripts
   }
 
-  /** Atomically stores UTF-8 source and returns metadata needed by the Script entity. */
-  write(scriptId, language, content) {
+  /** Resolves a script entity or relative path to its controlled file inside the real directory tree. */
+  getFilePath(scriptOrPath, language) {
+    const relativePath = typeof scriptOrPath === 'object' && scriptOrPath
+      ? scriptOrPath.relativePath ?? scriptOrPath.managedFileName
+      : UUID_PATTERN.test(scriptOrPath) ? createManagedScriptFileName(scriptOrPath, language) : scriptOrPath
+    return resolveManagedScriptPath(this.scriptsDirectory, relativePath, language, true).target
+  }
+
+  /** Atomically stores UTF-8 source at a visible relative path and returns synchronized metadata. */
+  write(scriptOrPath, language, content) {
     if (typeof content !== 'string') {
       throw new RepositoryError('VALIDATION_ERROR', '脚本内容必须是字符串')
     }
@@ -123,17 +268,28 @@ class ManagedScriptRepository {
       throw new RepositoryError('FILE_TOO_LARGE', `脚本大小不能超过 ${this.maxScriptBytes} 字节`)
     }
     this.initialize()
-    const managedFileName = createManagedScriptFileName(scriptId, language)
-    atomicWriteFile(path.join(this.scriptsDirectory, managedFileName), Buffer.from(content, 'utf8'))
-    return { managedFileName, contentHash: calculateSha256(content), size }
+    const requestedPath = UUID_PATTERN.test(scriptOrPath)
+      ? createManagedScriptFileName(scriptOrPath, language)
+      : scriptOrPath
+    const { normalized: relativePath, target } = resolveManagedScriptPath(this.scriptsDirectory, requestedPath, language, true)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    atomicWriteFile(target, Buffer.from(content, 'utf8'))
+    return { relativePath, managedFileName: relativePath, contentHash: calculateSha256(content), size }
+  }
+
+  /** Creates source only when its relative path is unused, preventing accidental overwrite of real files. */
+  create(relativePath, language, content) {
+    const { target } = resolveManagedScriptPath(this.scriptsDirectory, relativePath, language, true)
+    if (fs.existsSync(target)) throw new RepositoryError('NAME_CONFLICT', '脚本路径已存在')
+    return this.write(relativePath, language, content)
   }
 
   /** Reads one managed UTF-8 source file and reports a missing script distinctly. */
-  read(scriptId, language) {
-    const filePath = this.getFilePath(scriptId, language)
+  read(scriptOrPath, language) {
+    const filePath = this.getFilePath(scriptOrPath, language)
     try {
-      const stat = fs.statSync(filePath)
-      if (!stat.isFile()) throw new RepositoryError('SCRIPT_MISSING', '托管脚本不是普通文件')
+      const stat = fs.lstatSync(filePath)
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new RepositoryError('PATH_NOT_ALLOWED', '托管脚本不是普通文件')
       if (stat.size > this.maxScriptBytes) {
         throw new RepositoryError('FILE_TOO_LARGE', `脚本大小不能超过 ${this.maxScriptBytes} 字节`)
       }
@@ -144,22 +300,205 @@ class ManagedScriptRepository {
     }
   }
 
-  /** Removes only the controlled source file for the requested script. */
-  remove(scriptId, language) {
+  /** Removes only the controlled source file and prunes empty parent folders below the scripts root. */
+  remove(scriptOrPath, language) {
+    const filePath = this.getFilePath(scriptOrPath, language)
     try {
-      fs.rmSync(this.getFilePath(scriptId, language), { force: true })
+      fs.rmSync(filePath, { force: true })
+      let directory = path.dirname(filePath)
+      while (directory !== this.scriptsDirectory) {
+        if (fs.readdirSync(directory).length > 0) break
+        fs.rmdirSync(directory)
+        directory = path.dirname(directory)
+      }
     } catch (error) {
       throw mapFileError(error, 'WRITE_FAILED', '无法删除托管脚本')
     }
   }
 
-  /** Checks whether the controlled script path currently resolves to a regular file. */
-  exists(scriptId, language) {
+  /** Checks whether the controlled script path currently resolves to a non-symlinked regular file. */
+  exists(scriptOrPath, language) {
     try {
-      return fs.statSync(this.getFilePath(scriptId, language)).isFile()
+      const stat = fs.lstatSync(this.getFilePath(scriptOrPath, language))
+      return stat.isFile() && !stat.isSymbolicLink()
     } catch (error) {
-      if (error?.code === 'ENOENT') return false
+      if (error?.code === 'ENOENT' || error?.code === 'SCRIPT_MISSING') return false
       throw mapFileError(error, 'READ_FAILED', '无法检查托管脚本')
+    }
+  }
+
+  /** Returns whether a relative path conflicts with any managed script path under platform case rules. */
+  hasPathConflict(relativePath, scripts, excludedId = null, platform = process.platform) {
+    const key = platform === 'win32' ? relativePath.toLocaleLowerCase() : relativePath
+    return scripts.some(script => {
+      if (script.id === excludedId) return false
+      const candidate = script.relativePath ?? script.managedFileName
+      const candidateKey = platform === 'win32' ? candidate.toLocaleLowerCase() : candidate
+      return candidateKey === key || candidateKey.startsWith(`${key}/`) || key.startsWith(`${candidateKey}/`)
+    })
+  }
+
+  /** Creates one explicitly managed empty directory after validating every existing ancestor. */
+  createFolder(relativePath) {
+    const normalized = normalizeManagedFolderPath(relativePath)
+    const target = path.join(this.scriptsDirectory, ...normalized.split('/'))
+    const relative = path.relative(this.scriptsDirectory, target)
+    if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new RepositoryError('PATH_NOT_ALLOWED', '目录路径不能离开托管目录')
+    }
+    let current = this.scriptsDirectory
+    for (const segment of normalized.split('/')) {
+      current = path.join(current, segment)
+      if (!fs.existsSync(current)) continue
+      const stat = fs.lstatSync(current)
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new RepositoryError('NAME_CONFLICT', '目录路径与现有文件冲突')
+    }
+    if (fs.existsSync(target)) throw new RepositoryError('NAME_CONFLICT', '目录已存在')
+    try {
+      fs.mkdirSync(target, { recursive: true })
+      return normalized
+    } catch (error) {
+      throw mapFileError(error, 'WRITE_FAILED', '无法创建托管目录')
+    }
+  }
+
+  /** Moves one managed file or folder within the repository without following symbolic links. */
+  movePath(sourcePath, targetPath, kind, language) {
+    const normalizeFolder = value => String(value).startsWith('.transactions-delete-') ? String(value) : normalizeManagedFolderPath(value)
+    const sourceNormalized = kind === 'folder'
+      ? normalizeFolder(sourcePath)
+      : normalizeManagedScriptPath(sourcePath, language)
+    const targetNormalized = kind === 'folder'
+      ? normalizeFolder(targetPath)
+      : normalizeManagedScriptPath(targetPath, language)
+    if (kind === 'folder' && targetNormalized.startsWith(`${sourceNormalized}/`)) {
+      throw new RepositoryError('PATH_NOT_ALLOWED', '目录不能移动到自身内部')
+    }
+    const source = path.join(this.scriptsDirectory, ...sourceNormalized.split('/'))
+    const target = path.join(this.scriptsDirectory, ...targetNormalized.split('/'))
+    try {
+      const sourceStat = fs.lstatSync(source)
+      if (sourceStat.isSymbolicLink() || (kind === 'folder' ? !sourceStat.isDirectory() : !sourceStat.isFile())) {
+        throw new RepositoryError('PATH_NOT_ALLOWED', '待移动路径类型无效')
+      }
+      let parent = this.scriptsDirectory
+      for (const segment of targetNormalized.split('/').slice(0, -1)) {
+        parent = path.join(parent, segment)
+        if (!fs.existsSync(parent)) break
+        const parentStat = fs.lstatSync(parent)
+        if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) throw new RepositoryError('PATH_NOT_ALLOWED', '目标路径经过无效目录')
+      }
+      if (fs.existsSync(target)) throw new RepositoryError('NAME_CONFLICT', '目标路径已存在')
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.renameSync(source, target)
+      return targetNormalized
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error
+      throw mapFileError(error, 'WRITE_FAILED', '无法移动托管路径')
+    }
+  }
+
+  /**
+   * Copies one managed script file to a new relative path, mirroring movePath's
+   * validation. Returns normalized target path plus the copied file's hash/size
+   * so the service layer can persist fresh metadata without re-reading the file.
+   */
+  copyScriptFile(sourcePath, targetPath, language) {
+    const sourceNormalized = normalizeManagedScriptPath(sourcePath, language)
+    const targetNormalized = normalizeManagedScriptPath(targetPath, language)
+    const source = path.join(this.scriptsDirectory, ...sourceNormalized.split('/'))
+    const target = path.join(this.scriptsDirectory, ...targetNormalized.split('/'))
+    try {
+      const sourceStat = fs.lstatSync(source)
+      if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+        throw new RepositoryError('PATH_NOT_ALLOWED', '待复制路径类型无效')
+      }
+      if (sourceStat.size > this.maxScriptBytes) {
+        throw new RepositoryError('FILE_TOO_LARGE', `脚本大小不能超过 ${this.maxScriptBytes} 字节`)
+      }
+      let parent = this.scriptsDirectory
+      for (const segment of targetNormalized.split('/').slice(0, -1)) {
+        parent = path.join(parent, segment)
+        if (!fs.existsSync(parent)) break
+        const parentStat = fs.lstatSync(parent)
+        if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) throw new RepositoryError('PATH_NOT_ALLOWED', '目标路径经过无效目录')
+      }
+      if (fs.existsSync(target)) throw new RepositoryError('NAME_CONFLICT', '目标路径已存在')
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(source, target)
+      const content = fs.readFileSync(target, 'utf8')
+      return { relativePath: targetNormalized, contentHash: calculateSha256(content), size: sourceStat.size }
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error
+      throw mapFileError(error, 'WRITE_FAILED', '无法复制托管脚本')
+    }
+  }
+
+  /**
+   * Recursively copies a managed folder tree to a new relative path. Refuses to
+   * copy a folder into itself (matching movePath). On any mid-copy failure the
+   * partial target tree is removed so the repository is left consistent.
+   * Returns the normalized target plus the list of copied file entry paths.
+   */
+  copyFolderTree(sourcePath, targetPath) {
+    const sourceNormalized = normalizeManagedFolderPath(sourcePath)
+    const targetNormalized = normalizeManagedFolderPath(targetPath)
+    if (targetNormalized === sourceNormalized || targetNormalized.startsWith(`${sourceNormalized}/`)) {
+      throw new RepositoryError('PATH_NOT_ALLOWED', '目录不能复制到自身或其子目录')
+    }
+    const source = path.join(this.scriptsDirectory, ...sourceNormalized.split('/'))
+    const target = path.join(this.scriptsDirectory, ...targetNormalized.split('/'))
+    let parent = this.scriptsDirectory
+    for (const segment of targetNormalized.split('/').slice(0, -1)) {
+      parent = path.join(parent, segment)
+      if (!fs.existsSync(parent)) break
+      const parentStat = fs.lstatSync(parent)
+      if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) throw new RepositoryError('PATH_NOT_ALLOWED', '目标路径经过无效目录')
+    }
+    const sourceStat = fs.lstatSync(source)
+    if (sourceStat.isSymbolicLink() || !sourceStat.isDirectory()) {
+      throw new RepositoryError('PATH_NOT_ALLOWED', '待复制目录类型无效')
+    }
+    if (fs.existsSync(target)) throw new RepositoryError('NAME_CONFLICT', '目标路径已存在')
+    const copiedFiles = []
+    const walk = (currentSource, currentTarget) => {
+      fs.mkdirSync(currentTarget, { recursive: true })
+      for (const entry of fs.readdirSync(currentSource)) {
+        const from = path.join(currentSource, entry)
+        const to = path.join(currentTarget, entry)
+        const stat = fs.lstatSync(from)
+        if (stat.isSymbolicLink()) continue
+        if (stat.isDirectory()) walk(from, to)
+        else {
+          if (stat.size > this.maxScriptBytes) {
+            throw new RepositoryError('FILE_TOO_LARGE', `脚本大小不能超过 ${this.maxScriptBytes} 字节`)
+          }
+          fs.copyFileSync(from, to)
+          copiedFiles.push(path.relative(target, to).split(path.sep).join('/'))
+        }
+      }
+    }
+    try {
+      walk(source, target)
+      return { relativePath: targetNormalized, copiedFiles }
+    } catch (error) {
+      try { fs.rmSync(target, { recursive: true, force: true }) } catch {}
+      if (error instanceof RepositoryError) throw error
+      throw mapFileError(error, 'WRITE_FAILED', '无法复制托管目录')
+    }
+  }
+
+  /** Removes an explicitly managed empty folder; recursive content removal is coordinated by the service layer. */
+  removeFolder(relativePath) {
+    const normalized = String(relativePath).startsWith('.transactions-delete-') ? String(relativePath) : normalizeManagedFolderPath(relativePath)
+    const target = path.join(this.scriptsDirectory, ...normalized.split('/'))
+    try {
+      const stat = fs.lstatSync(target)
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new RepositoryError('PATH_NOT_ALLOWED', '托管目录类型无效')
+      fs.rmdirSync(target)
+    } catch (error) {
+      if (error instanceof RepositoryError) throw error
+      throw mapFileError(error, error?.code === 'ENOTEMPTY' ? 'REFERENCE_CONFLICT' : 'WRITE_FAILED', '无法删除托管目录')
     }
   }
 }
@@ -295,8 +634,14 @@ module.exports = {
   DEFAULT_MAX_SCRIPT_BYTES,
   LogFileRepository,
   ManagedScriptRepository,
+  RESERVED_SCRIPT_ROOT_NAMES,
   SCRIPT_EXTENSIONS,
+  atomicWriteFile,
   calculateSha256,
   createLogFileName,
-  createManagedScriptFileName
+  createManagedScriptFileName,
+  createManagedScriptPath,
+  normalizeManagedFolderPath,
+  normalizeManagedScriptPath,
+  resolveManagedScriptPath
 }

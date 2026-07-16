@@ -1,6 +1,7 @@
 'use strict'
 
 const { RepositoryError } = require('./metadata-repository')
+const { createManagedScriptPath } = require('./file-repositories')
 
 /** Ensures a migration function returns the exact next version and a serializable data payload. */
 function validateMigrationResult(result, expectedVersion, repositoryName) {
@@ -95,13 +96,50 @@ class MigrationRegistry {
   }
 }
 
-/** Creates the application's migration registry; schema v1 is the baseline and needs no steps yet. */
+/** Allocates deterministic readable paths while retaining any valid path already produced by a partial rollout. */
+function migrateScriptsToRelativePaths(envelope) {
+  const usedPaths = new Set()
+  const scripts = [...envelope.data].sort((left, right) => left.id.localeCompare(right.id)).map(script => {
+    const basePath = typeof script.relativePath === 'string' && script.relativePath
+      ? script.relativePath
+      : createManagedScriptPath(script.name, script.language, script.id)
+    let relativePath = basePath
+    let counter = 0
+    while (usedPaths.has(relativePath.toLocaleLowerCase())) {
+      counter += 1
+      const extensionIndex = basePath.lastIndexOf('.')
+      const suffix = counter === 1 ? script.id.slice(0, 8) : `${script.id.slice(0, 8)}-${counter}`
+      relativePath = `${basePath.slice(0, extensionIndex)}-${suffix}${basePath.slice(extensionIndex)}`
+    }
+    usedPaths.add(relativePath.toLocaleLowerCase())
+    const migrated = { ...script, relativePath }
+    if (script.managedFileName && script.managedFileName !== relativePath) migrated.legacyManagedFileName = script.managedFileName
+    delete migrated.managedFileName
+    return migrated
+  })
+  const byId = new Map(scripts.map(script => [script.id, script]))
+  return { schemaVersion: 2, data: envelope.data.map(script => byId.get(script.id)) }
+}
+
+/** Advances non-script repositories without changing their version-1 payload shape. */
+function migrateUnchangedRepository(envelope) {
+  return { schemaVersion: 2, data: envelope.data }
+}
+
+/** Creates the application's complete v1-to-v2 migration registry. */
 function createMigrationRegistry() {
-  return new MigrationRegistry()
+  const registry = new MigrationRegistry()
+    .register('scripts', 1, migrateScriptsToRelativePaths)
+  for (const repositoryName of ['tasks', 'environments', 'runRecords', 'settings']) {
+    registry.register(repositoryName, 1, migrateUnchangedRepository)
+  }
+  return registry
 }
 
 module.exports = {
   MigrationRegistry,
   createMigrationRegistry,
+  migrateScriptsToRelativePaths,
+  migrateUnchangedRepository,
   validateMigrationResult
 }

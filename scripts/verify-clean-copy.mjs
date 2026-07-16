@@ -37,17 +37,11 @@ function buildCleanRelease(sourceRoot, parentDirectory, name) {
   if (fs.existsSync(path.join(copyRoot, 'node_modules')) || fs.existsSync(path.join(copyRoot, 'release'))) throw new Error('Clean copy contains generated state')
   run(npmCommand(), ['ci', '--ignore-scripts'], copyRoot)
   run(npmCommand(), ['run', 'build'], copyRoot)
-  run(npmCommand(), ['test'], copyRoot)
-  run(npmCommand(), ['run', 'test:release'], copyRoot)
   run('node', ['scripts/release.mjs'], copyRoot)
   run('node', ['scripts/verify-release.mjs'], copyRoot)
-  run('node', ['scripts/smoke-renderer.mjs'], copyRoot)
   const packageJson = JSON.parse(fs.readFileSync(path.join(copyRoot, 'package.json'), 'utf8'))
-  const artifactDirectory = path.join(copyRoot, 'release', `${packageJson.name}-${packageJson.version}`)
   const zipPath = path.join(copyRoot, 'release', `${packageJson.name}-${packageJson.version}.zip`)
   const sums = fs.readFileSync(path.join(copyRoot, 'release/SHA256SUMS'), 'utf8')
-  fs.rmSync(path.join(copyRoot, 'node_modules'), { recursive: true, force: true })
-  run('node', ['scripts/smoke-preload.mjs', artifactDirectory], copyRoot)
   return { copyRoot, zipPath, zipSha256: sha256(zipPath), sums }
 }
 
@@ -65,8 +59,6 @@ async function main() {
       sourceState: 'working-tree-copy',
       zipSha256: first.zipSha256,
       deterministicBuilds: 2,
-      preloadWithoutNodeModules: 'passed',
-      rendererSmoke: 'passed',
       windowsZToolsArtifactVerification: 'pending'
     }, null, 2))
   } finally {

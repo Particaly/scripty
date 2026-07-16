@@ -53,12 +53,15 @@ function resolveInterpreter(task, interpreterResolver = defaultInterpreterResolv
 }
 
 /** Derives the first actionable readiness issue and retains the executable selected by the resolver. */
-function evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver = defaultInterpreterResolver) {
-  if (!script || !managedScriptRepository.exists(script.id, script.language)) {
+function evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver = defaultInterpreterResolver, dependencyService = null) {
+  if (!script || !managedScriptRepository.exists(script, script?.language)) {
     return { readiness: 'script_missing', resolvedExecutable: null }
   }
   const resolvedExecutable = resolveInterpreter(task, interpreterResolver)
   if (!resolvedExecutable) return { readiness: 'interpreter_unavailable', resolvedExecutable: null }
+  if (dependencyService && ['javascript', 'python'].includes(script.language) && !dependencyService.isEnvironmentReady(script.language === 'javascript' ? 'node' : 'python')) {
+    return { readiness: 'dependency_environment_stale', resolvedExecutable: null }
+  }
   if (!isValidFivePartCron(task.cron)) return { readiness: 'invalid_cron', resolvedExecutable: null }
   if (task.workingDirectory) {
     try {
@@ -73,8 +76,8 @@ function evaluateTaskReadiness(task, script, managedScriptRepository, interprete
 }
 
 /** Returns the public readiness state without exposing the resolved device-local executable path. */
-function getTaskReadiness(task, script, managedScriptRepository, interpreterResolver = defaultInterpreterResolver) {
-  return evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver).readiness
+function getTaskReadiness(task, script, managedScriptRepository, interpreterResolver = defaultInterpreterResolver, dependencyService = null) {
+  return evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver, dependencyService).readiness
 }
 
 /** Validates and normalizes the editable task fields before they enter persistent storage. */
@@ -161,7 +164,7 @@ function createNoopScheduler() {
 }
 
 /** Builds the task API with shared interpreter resolution while keeping raw repository objects inside preload. */
-function createTasksApi(metadataRepository, managedScriptRepository, scheduler = createNoopScheduler(), interpreterResolver = defaultInterpreterResolver) {
+function createTasksApi(metadataRepository, managedScriptRepository, scheduler = createNoopScheduler(), interpreterResolver = defaultInterpreterResolver, dependencyService = null) {
   /** Persists a complete task collection and commits its prepared schedule only after storage succeeds. */
   function persistTaskChange(nextTasks, scheduleTask, removedTaskId = null) {
     const change = removedTaskId
@@ -186,7 +189,7 @@ function createTasksApi(metadataRepository, managedScriptRepository, scheduler =
       return {
         ...task,
         scriptName: script?.name ?? '脚本已缺失',
-        readiness: getTaskReadiness(task, script, managedScriptRepository, interpreterResolver),
+        readiness: getTaskReadiness(task, script, managedScriptRepository, interpreterResolver, dependencyService),
         nextRunAt: scheduler.getNextRunAt(task.id),
         activeRunCount: 0
       }

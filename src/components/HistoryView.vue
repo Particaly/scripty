@@ -168,3 +168,134 @@ onBeforeUnmount(disposeHistory)
     </ZDrawer>
   </section>
 </template>
+
+<style scoped lang="scss">
+.history-view {
+  padding-top: 0;
+}
+
+.history-filters {
+  display: grid;
+  grid-template-columns: auto repeat(2, 150px);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.history-row__actions,
+.history-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.history-row__actions {
+  justify-content: flex-start;
+}
+
+/* zt-button--primary is a class on the ztools-ui button internals; reach it via :deep. */
+.history-row__actions :deep(.zt-button--primary) {
+  color: #fff !important;
+}
+
+.history-pagination {
+  justify-content: flex-end;
+  margin-top: 18px;
+}
+
+.history-detail {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+}
+
+.history-detail h3,
+.history-detail h4 {
+  margin: 0;
+}
+
+.history-log__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.history-log {
+  max-height: 420px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--code-bg, var(--card-bg));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.6 "SFMono-Regular", Consolas, monospace;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  height: 100%;
+  overflow: auto;
+  margin-bottom: 20px;
+  /* top/bottom padding absorbs the focus glow on the row action buttons of the
+     first/last row, which `overflow: auto` would otherwise clip. */
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-right: 10px;
+}
+
+.history-row {
+  max-height: 150px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto minmax(120px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.history-row > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.history-row > div:first-child span,
+.history-row dt {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.history-row dl {
+  display: flex;
+  justify-content: flex-end;
+  gap: 20px;
+  margin: 0;
+}
+
+.history-row dl div {
+  display: grid;
+  gap: 3px;
+}
+
+.history-row dd {
+  margin: 0;
+}
+
+.history-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--error-color);
+  font-size: 13px;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>

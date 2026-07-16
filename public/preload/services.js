@@ -17,6 +17,7 @@ const { buildExportPackageFiles } = require('./backup-package')
 const { createBackupsApi } = require('./backup-service')
 const { recoverImportTransactions } = require('./backup-import-transaction')
 const { createEnvironmentsApi } = require('./environment-service')
+const { createDependencyService } = require('./dependency-service')
 const { createHistoryApi } = require('./history-service')
 const { createInterpreterResolver } = require('./interpreter-resolver')
 const { createRunService, recoverInterruptedRuns } = require('./run-service')
@@ -44,6 +45,7 @@ const managedScriptRepository = new ManagedScriptRepository(dataPaths.scripts)
 const logFileRepository = new LogFileRepository(dataPaths.logs)
 metadataRepository.initialize()
 managedScriptRepository.initialize()
+managedScriptRepository.migrateLegacyFiles(metadataRepository)
 logFileRepository.initialize()
 recoverInterruptedRuns(metadataRepository)
 
@@ -52,11 +54,13 @@ const interpreterResolver = createInterpreterResolver({
   environment: process.env,
   homeDirectory: os.homedir()
 })
-const runService = createRunService(metadataRepository, managedScriptRepository, logFileRepository, undefined, process.platform, undefined, interpreterResolver)
+const dependencyService = createDependencyService(dataPaths.root, metadataRepository, interpreterResolver)
+dependencyService.initialize()
+const runService = createRunService(metadataRepository, managedScriptRepository, logFileRepository, undefined, process.platform, undefined, interpreterResolver, dependencyService)
 const scheduler = createSchedulerService({ startScheduledRun: runService.startScheduled })
 scheduler.initialize(metadataRepository.read('tasks'))
 registerSchedulerLifecycle(window.ztools, scheduler)
-const tasksApi = createTasksApi(metadataRepository, managedScriptRepository, scheduler, interpreterResolver)
+const tasksApi = createTasksApi(metadataRepository, managedScriptRepository, scheduler, interpreterResolver, dependencyService)
 
 /** Creates a timestamped full portable backup in the fixed backups directory before overwrite restoration. */
 async function createAutomaticBackup() {
@@ -67,11 +71,13 @@ async function createAutomaticBackup() {
     options: { includeEnvironments: true, includeEnvironmentValues: true, includeSensitiveValues: true },
     envelopes: {
       scripts: metadataRepository.readEnvelope('scripts'),
+      scriptFolders: metadataRepository.readEnvelope('scriptFolders'),
+      dependencies: metadataRepository.readEnvelope('dependencies'),
       tasks: metadataRepository.readEnvelope('tasks'),
       environments: metadataRepository.readEnvelope('environments'),
       settings: metadataRepository.readEnvelope('settings')
     },
-    readScriptContent: script => managedScriptRepository.read(script.id, script.language)
+    readScriptContent: script => managedScriptRepository.read(script, script.language)
   })
   fs.mkdirSync(dataPaths.backups, { recursive: true })
   const fileName = `pre-overwrite-${exportedAt.replace(/[:.]/g, '-')}.zip`
@@ -88,6 +94,7 @@ window.scripty = {
     scheduler,
     ztools: window.ztools
   }),
+  dependencies: dependencyService.api,
   environments: createEnvironmentsApi(metadataRepository, window.ztools),
   history: createHistoryApi(metadataRepository, logFileRepository, runService.api),
   runs: runService.api,

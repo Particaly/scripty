@@ -52,7 +52,7 @@ async function writeBackupArchive(files, targetPath, options = {}) {
     }
     zipFile.end()
     await completed
-    const descriptor = fs.openSync(temporaryPath, 'r')
+    const descriptor = fs.openSync(temporaryPath, 'r+')
     try {
       fs.fsyncSync(descriptor)
     } finally {

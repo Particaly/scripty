@@ -70,8 +70,8 @@ function recoverInterruptedRuns(metadataRepository, timestamp = new Date().toISO
   return recovered.filter(record => record.status === 'interrupted')
 }
 
-/** Builds process execution with shared interpreter resolution and a token-gated scheduled start path. */
-function createRunService(metadataRepository, managedScriptRepository, logFileRepository, spawnProcess = spawn, platform = process.platform, timers = { setTimeout, clearTimeout }, interpreterResolver = defaultInterpreterResolver) {
+/** Builds process execution with shared interpreter resolution and isolated dependency environments. */
+function createRunService(metadataRepository, managedScriptRepository, logFileRepository, spawnProcess = spawn, platform = process.platform, timers = { setTimeout, clearTimeout }, interpreterResolver = defaultInterpreterResolver, dependencyService = null) {
   const activeRuns = new Map()
   const startReservations = new Map()
   const listeners = new Set()
@@ -278,12 +278,25 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
     const task = metadataRepository.read('tasks').find(item => item.id === taskId)
     if (!task) throw new RepositoryError('NOT_FOUND', '任务不存在')
     const script = metadataRepository.read('scripts').find(item => item.id === task.scriptId)
-    const evaluation = evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver)
+    const evaluation = evaluateTaskReadiness(task, script, managedScriptRepository, interpreterResolver, dependencyService)
+    let resolvedExecutable = evaluation.resolvedExecutable
+    if (evaluation.readiness === 'ready' && dependencyService) {
+      resolvedExecutable = dependencyService.resolveRuntime(script.language, resolvedExecutable)
+      if (!resolvedExecutable) throw new RepositoryError('DEPENDENCY_ENVIRONMENT_MISSING', 'Python 依赖环境尚未同步，请先在依赖页同步')
+    }
     if (evaluation.readiness !== 'ready') {
-      const code = evaluation.readiness === 'script_missing' ? 'SCRIPT_MISSING' : evaluation.readiness === 'interpreter_unavailable' ? 'INTERPRETER_UNAVAILABLE' : evaluation.readiness === 'invalid_cron' ? 'INVALID_CRON' : 'PATH_NOT_ALLOWED'
+      const code = evaluation.readiness === 'script_missing'
+        ? 'SCRIPT_MISSING'
+        : evaluation.readiness === 'interpreter_unavailable'
+          ? 'INTERPRETER_UNAVAILABLE'
+          : evaluation.readiness === 'dependency_environment_stale'
+            ? 'DEPENDENCY_ENVIRONMENT_STALE'
+            : evaluation.readiness === 'invalid_cron'
+              ? 'INVALID_CRON'
+              : 'PATH_NOT_ALLOWED'
       throw new RepositoryError(code, '任务配置当前不可运行')
     }
-    return { task, script, resolvedExecutable: evaluation.resolvedExecutable }
+    return { task, script, resolvedExecutable }
   }
 
   const api = {
@@ -308,11 +321,13 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
         let logCreated = false
         try {
           effectiveTimeoutMs = task.timeoutMs ?? metadataRepository.read('settings').defaultTimeoutMs
-          scriptPath = managedScriptRepository.getFilePath(script.id, script.language)
+          scriptPath = managedScriptRepository.getFilePath(script, script.language)
           const environments = metadataRepository.read('environments')
+          const taskEnvironment = buildTaskEnvironment(process.env, environments, task.id)
+          if (process.env.PATH !== undefined) taskEnvironment.PATH = process.env.PATH
           spawnOptions = {
             cwd: task.workingDirectory ?? managedScriptRepository.scriptsDirectory,
-            env: buildTaskEnvironment(process.env, environments, task.id),
+            env: dependencyService ? dependencyService.buildRuntimeEnvironment(script.language, taskEnvironment) : taskEnvironment,
             shell: false,
             detached: platform !== 'win32',
             windowsHide: true,

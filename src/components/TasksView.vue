@@ -79,6 +79,7 @@ const readinessOptions = [
   { label: '可运行', value: 'ready' },
   { label: '脚本缺失', value: 'script_missing' },
   { label: '解释器不可用', value: 'interpreter_unavailable' },
+  { label: '依赖待同步', value: 'dependency_environment_stale' },
   { label: 'Cron 无效', value: 'invalid_cron' },
   { label: '工作目录无效', value: 'invalid_working_directory' }
 ]
@@ -86,12 +87,14 @@ const readinessLabels: Record<TaskSummary['readiness'], string> = {
   ready: '可运行',
   script_missing: '脚本缺失',
   interpreter_unavailable: '解释器不可用',
+  dependency_environment_stale: '依赖待同步',
   invalid_cron: 'Cron 无效',
   invalid_working_directory: '工作目录无效'
 }
 const readinessGuidance: Record<Exclude<TaskSummary['readiness'], 'ready'>, { message: string; action: string }> = {
   script_missing: { message: '托管源码文件不存在，请重新导入脚本或为任务选择其他脚本。', action: '选择脚本' },
   interpreter_unavailable: { message: '解释器命令为空或本地文件不可用，请重新配置。', action: '配置解释器' },
+  dependency_environment_stale: { message: '共享依赖环境尚未同步或声明已变化，请先到依赖页同步。', action: '同步依赖' },
   invalid_cron: { message: 'Cron 不是有效的五段表达式，请修改计划。', action: '修改 Cron' },
   invalid_working_directory: { message: '工作目录不存在或不是目录，请修改或留空。', action: '修改目录' }
 }
@@ -553,7 +556,6 @@ watch(
           <h2 id="tasks-heading">任务库</h2>
         </div>
         <div class="section-heading__actions">
-          <ZTag type="info" size="small">{{ filteredTasks.length }} / {{ tasks.length }}</ZTag>
           <ZButton type="primary" :disabled="scripts.length === 0" @click="openCreateDrawer">创建任务</ZButton>
         </div>
       </div>
@@ -611,3 +613,162 @@ watch(
     </div>
   </section>
 </template>
+
+<style scoped lang="scss">
+.tasks-view {
+  padding-top: 0;
+}
+
+.task-issue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--warning-color);
+  font-size: 13px;
+}
+
+.task-row__controls {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 12px;
+}
+
+/* .task-message lives in shared.scss; here we style the task row paragraph specifically. */
+.task-row p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.task-filters {
+  display: grid;
+  grid-template-columns: auto 150px 150px;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.task-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.task-row__content {
+  min-width: 0;
+}
+
+.task-row__title,
+.task-row__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.task-row__content p {
+  margin-top: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row__content > span,
+.task-row__toggle > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.empty-state--compact {
+  min-height: 260px;
+}
+
+/* ----- schedule field ----- */
+.schedule-field {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.schedule-field legend {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.schedule-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.schedule-preview {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.schedule-preview p {
+  margin: 0;
+}
+
+.schedule-preview__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-color);
+}
+
+.schedule-preview ol {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+
+.schedule-preview time {
+  overflow-wrap: anywhere;
+}
+
+.schedule-preview__error {
+  color: var(--error-color);
+}
+
+@media (max-width: 760px) {
+  .task-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .task-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .task-row__controls {
+    width: 100%;
+    align-items: center;
+    grid-template-columns: 1fr auto;
+    justify-items: start;
+  }
+}
+</style>

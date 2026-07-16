@@ -1,5 +1,7 @@
 import type {
   ConcurrencyConfig,
+  Dependency,
+  DependencyKind,
   EntityId,
   EnvironmentScope,
   EnvironmentVariable,
@@ -10,6 +12,7 @@ import type {
   RunStatus,
   RunTrigger,
   Script,
+  ScriptFolder,
   ScriptLanguage,
   Settings,
   Task
@@ -29,6 +32,10 @@ export type ErrorCode =
   | 'FILE_TYPE_NOT_ALLOWED'
   | 'PATH_NOT_ALLOWED'
   | 'INTERPRETER_UNAVAILABLE'
+  | 'DEPENDENCY_ENVIRONMENT_MISSING'
+  | 'DEPENDENCY_ENVIRONMENT_STALE'
+  | 'DEPENDENCY_INSTALL_ACTIVE'
+  | 'DEPENDENCY_INSTALL_FAILED'
   | 'SPAWN_FAILED'
   | 'RUN_ALREADY_ACTIVE'
   | 'RUN_LIMIT_REACHED'
@@ -78,6 +85,7 @@ export type TaskReadiness =
   | 'ready'
   | 'script_missing'
   | 'interpreter_unavailable'
+  | 'dependency_environment_stale'
   | 'invalid_cron'
   | 'invalid_working_directory'
 
@@ -103,10 +111,21 @@ export interface CreateScriptInput {
   name: string
   language: ScriptLanguage
   content: string
+  relativePath: string
   note: string
 }
 
 export type UpdateScriptInput = CreateScriptInput
+
+export type ScriptFolderSummary = ScriptFolder
+
+export interface CreateScriptFolderInput {
+  relativePath: string
+}
+
+export interface MoveManagedPathInput {
+  relativePath: string
+}
 
 export interface SelectedScriptFile {
   selectionToken: string
@@ -118,6 +137,7 @@ export interface SelectedScriptFile {
 export interface ImportScriptInput {
   name: string
   language: ScriptLanguage
+  relativePath: string
   note: string
 }
 
@@ -311,6 +331,8 @@ export interface ImportChangeCounts {
 export interface ImportChangePreview {
   total: ImportChangeCounts
   scripts: ImportChangeCounts
+  scriptFolders: ImportChangeCounts
+  dependencies: ImportChangeCounts
   tasks: ImportChangeCounts
   environments: ImportChangeCounts
   settings: ImportChangeCounts
@@ -371,7 +393,14 @@ export interface ScriptsApi {
   update(id: EntityId, input: UpdateScriptInput): Promise<Result<ScriptDetail>>
   chooseImportFile(): Promise<Result<SelectedScriptFile | null>>
   importSelected(selectionToken: string, input: ImportScriptInput): Promise<Result<ScriptDetail>>
-  remove?(id: EntityId): Promise<Result<void>>
+  listFolders(): Promise<Result<ScriptFolderSummary[]>>
+  createFolder(input: CreateScriptFolderInput): Promise<Result<ScriptFolderSummary>>
+  moveFolder(id: EntityId, input: MoveManagedPathInput): Promise<Result<ScriptFolderSummary>>
+  removeFolder(id: EntityId): Promise<Result<void>>
+  move(id: EntityId, input: MoveManagedPathInput): Promise<Result<ScriptSummary>>
+  copy(id: EntityId, input: MoveManagedPathInput): Promise<Result<ScriptSummary>>
+  copyFolder(id: EntityId, input: MoveManagedPathInput): Promise<Result<ScriptFolderSummary>>
+  remove(id: EntityId): Promise<Result<void>>
 }
 
 /** Persisted task configuration and schedule preview operations. */
@@ -418,6 +447,46 @@ export interface HistoryApi {
   clear(input: HistoryCleanupInput): Promise<Result<CleanupSummary>>
 }
 
+export type DependencyStatus = 'installed' | 'missing' | 'stale'
+
+export interface DependencySummary extends Dependency {
+  installedVersion: string | null
+  status: DependencyStatus
+}
+
+export interface CreateDependencyInput {
+  kind: DependencyKind
+  name: string
+  versionSpec: string
+}
+
+export interface DependencySyncResult {
+  kind: DependencyKind
+  exitCode: number
+  output: string
+  synchronized: boolean
+}
+
+export interface DependencyEnvironmentStatus {
+  ready: boolean
+  installing: boolean
+}
+
+export interface DependencyStatusSnapshot {
+  node: DependencyEnvironmentStatus
+  python: DependencyEnvironmentStatus
+}
+
+/** Fixed-root direct dependency operations; callers cannot supply commands or filesystem paths. */
+export interface DependenciesApi {
+  list(kind?: DependencyKind): Promise<Result<DependencySummary[]>>
+  add(input: CreateDependencyInput): Promise<Result<Dependency>>
+  updateVersion(id: EntityId, versionSpec: string): Promise<Result<Dependency>>
+  remove(id: EntityId): Promise<Result<void>>
+  sync(kind: DependencyKind): Promise<Result<DependencySyncResult>>
+  getStatus(): Promise<Result<DependencyStatusSnapshot>>
+}
+
 /** Device-local defaults and validated interpreter selection operations. */
 export interface SettingsApi {
   get(): Promise<Result<SettingsView>>
@@ -432,11 +501,12 @@ export interface SettingsApi {
 /** The complete constrained API exposed by preload as window.scripty. */
 export interface ScriptyApi {
   app: AppApi
-  scripts?: ScriptsApi
+  backups: BackupsApi
+  dependencies: DependenciesApi
+  scripts: ScriptsApi
   tasks: TasksApi
   runs: RunsApi
   environments: EnvironmentsApi
   history: HistoryApi
   settings: SettingsApi
-  backups?: BackupsApi
 }

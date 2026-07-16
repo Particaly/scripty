@@ -10,3 +10,12 @@ const statuses: RunStatus[] = ['starting', 'running', 'success', 'failed', 'time
     <RunStatusTag v-for="status in statuses" :key="status" :status="status" size="medium" />
   </section>
 </template>
+
+<style scoped lang="scss">
+.status-reference {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+</style>

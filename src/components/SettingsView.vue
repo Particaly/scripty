@@ -73,3 +73,41 @@ onMounted(loadSettings)
     </div>
   </section>
 </template>
+
+<style scoped lang="scss">
+.settings-view {
+  padding-top: 0;
+}
+
+.interpreter-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.interpreter-row {
+  display: grid;
+  grid-template-columns: 150px minmax(160px, 420px) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--card-bg);
+}
+
+.interpreter-row__label {
+  display: grid;
+  gap: 4px;
+}
+
+.interpreter-row__label span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .interpreter-row {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

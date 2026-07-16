@@ -8,9 +8,11 @@ const { TextDecoder } = require('node:util')
 const yauzl = require('yauzl')
 const { isValidFivePartCron } = require('./cron-utils')
 const { createManagedScriptFileName } = require('./file-repositories')
-const { CURRENT_SCHEMA_VERSION, RepositoryError, mapFileSystemError } = require('./metadata-repository')
+const { RepositoryError, mapFileSystemError } = require('./metadata-repository')
 const {
   EXPORT_FORMAT_VERSION,
+  LEGACY_EXPORT_FORMAT_VERSION,
+  LEGACY_REQUIRED_DATA_PATHS,
   HASH_PATTERN,
   MAX_COMPRESSION_RATIO,
   MAX_PACKAGE_BYTES,
@@ -22,6 +24,8 @@ const {
   isAllowedPackagePath
 } = require('./backup-protocol')
 
+const BACKUP_DATA_SCHEMA_VERSION = 2
+const LEGACY_BACKUP_DATA_SCHEMA_VERSION = 1
 const ENTITY_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
@@ -90,8 +94,10 @@ function assertConcurrency(value, label) {
 }
 
 /** Validates the exact portable Script shape before deriving its controlled package path. */
-function assertPortableScript(script) {
-  assertExactKeys(script, ['id', 'name', 'managedFileName', 'language', 'contentHash', 'note', 'createdAt', 'updatedAt'], '脚本')
+function assertPortableScript(script, legacy = false) {
+  assertExactKeys(script, legacy
+    ? ['id', 'name', 'managedFileName', 'language', 'contentHash', 'note', 'createdAt', 'updatedAt']
+    : ['id', 'name', 'managedFileName', 'relativePath', 'language', 'contentHash', 'note', 'createdAt', 'updatedAt'], '脚本')
   assertTimestampedEntity(script, '脚本')
   if (!SCRIPT_LANGUAGES.has(script.language) || !HASH_PATTERN.test(script.contentHash)) {
     throw new RepositoryError('PACKAGE_INVALID', '脚本语言或哈希无效')
@@ -155,15 +161,18 @@ function assertPortableSettings(settings) {
 function validateImportManifest(manifest) {
   assertExactKeys(manifest, ['formatVersion', 'appVersion', 'exportedAt', 'entities', 'options', 'files'], 'manifest.json')
   if (typeof manifest.formatVersion !== 'string') throw new RepositoryError('PACKAGE_INVALID', '备份格式版本无效')
-  if (manifest.formatVersion !== EXPORT_FORMAT_VERSION) {
-    throw new RepositoryError('UNSUPPORTED_EXPORT_VERSION', `仅支持备份格式 ${EXPORT_FORMAT_VERSION}`)
+  if (manifest.formatVersion !== EXPORT_FORMAT_VERSION && manifest.formatVersion !== LEGACY_EXPORT_FORMAT_VERSION) {
+    throw new RepositoryError('UNSUPPORTED_EXPORT_VERSION', `仅支持备份格式 ${LEGACY_EXPORT_FORMAT_VERSION} 或 ${EXPORT_FORMAT_VERSION}`)
   }
   if (!SEMVER_PATTERN.test(manifest.appVersion)) throw new RepositoryError('PACKAGE_INVALID', '备份应用版本无效')
   const exportedAt = new Date(manifest.exportedAt)
   if (typeof manifest.exportedAt !== 'string' || Number.isNaN(exportedAt.getTime()) || exportedAt.toISOString() !== manifest.exportedAt) {
     throw new RepositoryError('PACKAGE_INVALID', '备份导出时间无效')
   }
-  assertExactKeys(manifest.entities, ['scripts', 'tasks', 'environments'], '实体数量')
+  const expectedEntityKeys = manifest.formatVersion === LEGACY_EXPORT_FORMAT_VERSION
+    ? ['scripts', 'tasks', 'environments']
+    : ['scripts', 'scriptFolders', 'dependencies', 'tasks', 'environments']
+  assertExactKeys(manifest.entities, expectedEntityKeys, '实体数量')
   for (const value of Object.values(manifest.entities)) {
     if (!Number.isSafeInteger(value) || value < 0) throw new RepositoryError('PACKAGE_INVALID', '实体数量无效')
   }
@@ -187,8 +196,9 @@ function validateImportManifest(manifest) {
     paths.add(collisionKey)
     previousPath = file.path
   }
-  for (const requiredPath of REQUIRED_DATA_PATHS) {
-    if (!paths.has(requiredPath)) throw new RepositoryError('PACKAGE_INVALID', '备份缺少必填数据文件')
+  const requiredPaths = manifest.formatVersion === LEGACY_EXPORT_FORMAT_VERSION ? LEGACY_REQUIRED_DATA_PATHS : REQUIRED_DATA_PATHS
+  for (const requiredPath of requiredPaths) {
+    if (!paths.has(requiredPath.toLowerCase())) throw new RepositoryError('PACKAGE_INVALID', '备份缺少必填数据文件')
   }
   return manifest
 }
@@ -290,11 +300,17 @@ function reconcileManifestEntries(manifest, entries) {
 
 /** Validates current-version envelopes, portable entities, references, counts, and script-file relationships. */
 function validateImportDocuments(manifest, documents, hashes) {
-  const shapes = { scripts: 'array', tasks: 'array', environments: 'array', settings: 'object' }
+  const legacy = manifest.formatVersion === LEGACY_EXPORT_FORMAT_VERSION
+  if (legacy) {
+    documents.scriptFolders = { schemaVersion: LEGACY_BACKUP_DATA_SCHEMA_VERSION, data: [] }
+    documents.dependencies = { schemaVersion: LEGACY_BACKUP_DATA_SCHEMA_VERSION, data: [] }
+  }
+  const shapes = { scripts: 'array', scriptFolders: 'array', dependencies: 'array', tasks: 'array', environments: 'array', settings: 'object' }
   for (const [name, shape] of Object.entries(shapes)) {
     const envelope = documents[name]
     assertExactKeys(envelope, ['schemaVersion', 'data'], `${name}.json`)
-    if (envelope.schemaVersion !== CURRENT_SCHEMA_VERSION) throw new RepositoryError('UNSUPPORTED_DATA_VERSION', `${name}.json 数据版本不受支持`)
+    const expectedVersion = legacy ? LEGACY_BACKUP_DATA_SCHEMA_VERSION : BACKUP_DATA_SCHEMA_VERSION
+    if (envelope.schemaVersion !== expectedVersion) throw new RepositoryError('UNSUPPORTED_DATA_VERSION', `${name}.json 数据版本不受支持`)
     if (shape === 'array' ? !Array.isArray(envelope.data) : !envelope.data || typeof envelope.data !== 'object' || Array.isArray(envelope.data)) {
       throw new RepositoryError('PACKAGE_INVALID', `${name}.json 数据格式无效`)
     }
@@ -308,11 +324,13 @@ function validateImportDocuments(manifest, documents, hashes) {
     return result
   }
   const scripts = createMap(documents.scripts.data, '脚本')
+  const scriptFolders = createMap(documents.scriptFolders.data, '脚本目录')
+  const dependencies = createMap(documents.dependencies.data, '依赖')
   const tasks = createMap(documents.tasks.data, '任务')
   createMap(documents.environments.data, '环境变量')
   const scriptPaths = new Set()
   for (const script of scripts.values()) {
-    assertPortableScript(script)
+    assertPortableScript(script, legacy)
     let expectedName
     try { expectedName = createManagedScriptFileName(script.id, script.language) } catch { throw new RepositoryError('PACKAGE_INVALID', '脚本托管文件名无效') }
     if (script.managedFileName !== expectedName) throw new RepositoryError('PACKAGE_INVALID', '脚本托管文件名无效')
@@ -322,11 +340,28 @@ function validateImportDocuments(manifest, documents, hashes) {
   }
   const actualScriptPaths = [...hashes.keys()].filter(item => item.startsWith('scripts/'))
   if (actualScriptPaths.length !== scriptPaths.size || actualScriptPaths.some(item => !scriptPaths.has(item))) throw new RepositoryError('PACKAGE_INVALID', '脚本文件与元数据不是一一对应')
+  const folderPaths = new Set()
+  for (const folder of scriptFolders.values()) {
+    assertExactKeys(folder, ['id', 'relativePath', 'createdAt', 'updatedAt'], '脚本目录')
+    assertString(folder.relativePath, '脚本目录路径', { allowEmpty: false })
+    if (!isCanonicalIsoDateTime(folder.createdAt) || !isCanonicalIsoDateTime(folder.updatedAt) || folderPaths.has(folder.relativePath.toLocaleLowerCase())) throw new RepositoryError('PACKAGE_INVALID', '脚本目录无效或重复')
+    folderPaths.add(folder.relativePath.toLocaleLowerCase())
+  }
+  const dependencyNames = new Set()
+  for (const dependency of dependencies.values()) {
+    assertExactKeys(dependency, ['id', 'kind', 'name', 'versionSpec', 'createdAt', 'updatedAt'], '依赖')
+    const key = `${dependency.kind}:${dependency.name}`
+    if (!['node', 'python'].includes(dependency.kind) || typeof dependency.name !== 'string' || typeof dependency.versionSpec !== 'string' || !isCanonicalIsoDateTime(dependency.createdAt) || !isCanonicalIsoDateTime(dependency.updatedAt) || dependencyNames.has(key)) throw new RepositoryError('PACKAGE_INVALID', '依赖声明无效或重复')
+    dependencyNames.add(key)
+  }
   for (const task of tasks.values()) assertPortableTask(task, scripts)
   const namesByScope = new Set()
   for (const variable of documents.environments.data) assertPortableEnvironment(variable, tasks, manifest, namesByScope)
   if (!manifest.options.includeEnvironments && documents.environments.data.length !== 0) throw new RepositoryError('PACKAGE_INVALID', '未声明环境变量却包含环境数据')
-  if (manifest.entities.scripts !== scripts.size || manifest.entities.tasks !== tasks.size || manifest.entities.environments !== documents.environments.data.length) throw new RepositoryError('PACKAGE_INVALID', '实体数量与清单不一致')
+  const expectedEntities = legacy
+    ? { scripts: scripts.size, tasks: tasks.size, environments: documents.environments.data.length }
+    : { scripts: scripts.size, scriptFolders: scriptFolders.size, dependencies: dependencies.size, tasks: tasks.size, environments: documents.environments.data.length }
+  if (Object.entries(expectedEntities).some(([key, count]) => manifest.entities[key] !== count)) throw new RepositoryError('PACKAGE_INVALID', '实体数量与清单不一致')
   assertPortableSettings(documents.settings.data)
 }
 

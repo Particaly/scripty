@@ -3,9 +3,18 @@
 const path = require('node:path')
 const { RepositoryError } = require('./metadata-repository')
 
-const EXPORT_FORMAT_VERSION = '1.0'
-const REQUIRED_DATA_PATHS = Object.freeze([
+const EXPORT_FORMAT_VERSION = '1.1'
+const LEGACY_EXPORT_FORMAT_VERSION = '1.0'
+const LEGACY_REQUIRED_DATA_PATHS = Object.freeze([
   'data/environments.json',
+  'data/scripts.json',
+  'data/settings.json',
+  'data/tasks.json'
+])
+const REQUIRED_DATA_PATHS = Object.freeze([
+  'data/dependencies.json',
+  'data/environments.json',
+  'data/scriptFolders.json',
   'data/scripts.json',
   'data/settings.json',
   'data/tasks.json'
@@ -29,7 +38,7 @@ function isAllowedPackagePath(entryPath) {
   if (path.posix.isAbsolute(entryPath) || /^[A-Za-z]:\//.test(entryPath) || entryPath.startsWith('//')) return false
   const segments = entryPath.split('/')
   if (segments.some(segment => !segment || segment === '.' || segment === '..')) return false
-  return entryPath === 'manifest.json' || REQUIRED_DATA_PATHS.includes(entryPath) || SCRIPT_PATH_PATTERN.test(entryPath)
+  return entryPath === 'manifest.json' || REQUIRED_DATA_PATHS.includes(entryPath) || LEGACY_REQUIRED_DATA_PATHS.includes(entryPath) || SCRIPT_PATH_PATTERN.test(entryPath)
 }
 
 /** Returns the per-entry uncompressed-byte limit for one canonical package path. */
@@ -55,6 +64,8 @@ function assertExportOptions(options, code = 'VALIDATION_ERROR') {
 
 module.exports = {
   EXPORT_FORMAT_VERSION,
+  LEGACY_EXPORT_FORMAT_VERSION,
+  LEGACY_REQUIRED_DATA_PATHS,
   HASH_PATTERN,
   MAX_COMPRESSION_RATIO,
   MAX_JSON_BYTES,

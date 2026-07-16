@@ -2,7 +2,7 @@
 
 const { CURRENT_SCHEMA_VERSION, RepositoryError } = require('./metadata-repository')
 const { isValidFivePartCron } = require('./cron-utils')
-const { calculateSha256, createManagedScriptFileName } = require('./file-repositories')
+const { calculateSha256, createManagedScriptFileName, createManagedScriptPath, normalizeManagedFolderPath, normalizeManagedScriptPath } = require('./file-repositories')
 const {
   EXPORT_FORMAT_VERSION,
   HASH_PATTERN,
@@ -14,6 +14,7 @@ const {
   compareStableText
 } = require('./backup-protocol')
 
+const BACKUP_DATA_SCHEMA_VERSION = 2
 const SEMVER_CORE_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
 const ENTITY_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const ENVIRONMENT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -134,7 +135,8 @@ function projectScript(script) {
   return {
     id: script.id,
     name: script.name,
-    managedFileName: script.managedFileName,
+    managedFileName: createManagedScriptFileName(script.id, script.language),
+    relativePath: script.relativePath,
     language: script.language,
     contentHash: script.contentHash,
     note: script.note,
@@ -217,6 +219,8 @@ function validateAndReadSource(envelopes, readScriptContent, includeEnvironments
     throw new RepositoryError('DATA_CORRUPTED', '缺少导出数据快照')
   }
   assertEnvelope(envelopes.scripts, '脚本', 'array')
+  assertEnvelope(envelopes.scriptFolders, '脚本目录', 'array')
+  assertEnvelope(envelopes.dependencies, '依赖', 'array')
   assertEnvelope(envelopes.tasks, '任务', 'array')
   assertEnvelope(envelopes.environments, '环境变量', 'array')
   assertEnvelope(envelopes.settings, '设置', 'object')
@@ -226,36 +230,65 @@ function validateAndReadSource(envelopes, readScriptContent, includeEnvironments
 
   const snapshot = {
     scripts: { schemaVersion: envelopes.scripts.schemaVersion, data: structuredClone(envelopes.scripts.data) },
+    scriptFolders: { schemaVersion: envelopes.scriptFolders.schemaVersion, data: structuredClone(envelopes.scriptFolders.data) },
+    dependencies: { schemaVersion: envelopes.dependencies.schemaVersion, data: structuredClone(envelopes.dependencies.data) },
     tasks: { schemaVersion: envelopes.tasks.schemaVersion, data: structuredClone(envelopes.tasks.data) },
     environments: { schemaVersion: envelopes.environments.schemaVersion, data: structuredClone(envelopes.environments.data) },
     settings: { schemaVersion: envelopes.settings.schemaVersion, data: structuredClone(envelopes.settings.data) }
   }
   const scriptsById = createEntityMap(snapshot.scripts.data, '脚本')
+  const foldersById = createEntityMap(snapshot.scriptFolders.data, '脚本目录')
+  const dependenciesById = createEntityMap(snapshot.dependencies.data, '依赖')
   const tasksById = createEntityMap(snapshot.tasks.data, '任务')
   const environmentsById = includeEnvironments
     ? createEntityMap(snapshot.environments.data, '环境变量')
     : new Map()
   const scriptContents = new Map()
-  const scripts = [...scriptsById.values()].sort((a, b) => compareStableText(a.id, b.id)).map(projectScript)
+  const scripts = [...scriptsById.values()].sort((a, b) => compareStableText(a.id, b.id)).map(script => {
+    const content = readScriptContent(script)
+    if (typeof content !== 'string') throw new RepositoryError('DATA_CORRUPTED', '托管脚本内容格式无效')
+    if (Buffer.byteLength(content, 'utf8') > MAX_SCRIPT_BYTES) throw new RepositoryError('DATA_CORRUPTED', '托管脚本超过导出单文件限制')
+    const currentHash = calculateSha256(content)
+    if (script.contentHash !== currentHash) throw new RepositoryError('DATA_CORRUPTED', '托管脚本内容与元数据哈希不一致')
+    const projected = projectScript({ ...script, contentHash: currentHash })
+    scriptContents.set(script.id, Buffer.from(content, 'utf8'))
+    return projected
+  })
 
   for (const script of scripts) {
     assertTimestampedEntity(script, '脚本')
     if (!SCRIPT_LANGUAGES.has(script.language) || !HASH_PATTERN.test(script.contentHash)) {
       throw new RepositoryError('DATA_CORRUPTED', '脚本语言或内容哈希无效')
     }
+    try { normalizeManagedScriptPath(script.relativePath, script.language) } catch {
+      throw new RepositoryError('DATA_CORRUPTED', '脚本相对路径无效')
+    }
     const expectedName = createManagedScriptFileName(script.id, script.language)
     if (script.managedFileName !== expectedName) {
       throw new RepositoryError('DATA_CORRUPTED', '脚本托管文件名与 ID 或语言不一致')
     }
-    const content = readScriptContent(projectScript(script))
-    if (typeof content !== 'string') throw new RepositoryError('DATA_CORRUPTED', '托管脚本内容格式无效')
-    if (Buffer.byteLength(content, 'utf8') > MAX_SCRIPT_BYTES) {
-      throw new RepositoryError('DATA_CORRUPTED', '托管脚本超过导出单文件限制')
+    if (calculateSha256(scriptContents.get(script.id)) !== script.contentHash) {
+      throw new RepositoryError('DATA_CORRUPTED', '托管脚本内容与导出快照不一致')
     }
-    if (calculateSha256(content) !== script.contentHash) {
-      throw new RepositoryError('DATA_CORRUPTED', '托管脚本内容与元数据哈希不一致')
+  }
+
+  const folderPaths = new Set()
+  for (const folder of foldersById.values()) {
+    if (!isCanonicalIsoDateTime(folder.createdAt) || !isCanonicalIsoDateTime(folder.updatedAt)) throw new RepositoryError('DATA_CORRUPTED', '脚本目录时间无效')
+    let relativePath
+    try { relativePath = normalizeManagedFolderPath(folder.relativePath) } catch { throw new RepositoryError('DATA_CORRUPTED', '脚本目录路径无效') }
+    const key = relativePath.toLocaleLowerCase()
+    if (folderPaths.has(key)) throw new RepositoryError('DATA_CORRUPTED', '脚本目录路径重复')
+    folderPaths.add(key)
+  }
+  const dependencyNames = new Set()
+  for (const dependency of dependenciesById.values()) {
+    if (!['node', 'python'].includes(dependency.kind) || typeof dependency.name !== 'string' || typeof dependency.versionSpec !== 'string' || !isCanonicalIsoDateTime(dependency.createdAt) || !isCanonicalIsoDateTime(dependency.updatedAt)) {
+      throw new RepositoryError('DATA_CORRUPTED', '依赖声明无效')
     }
-    scriptContents.set(script.id, Buffer.from(content, 'utf8'))
+    const key = `${dependency.kind}:${dependency.name}`
+    if (dependencyNames.has(key)) throw new RepositoryError('DATA_CORRUPTED', '依赖声明重复')
+    dependencyNames.add(key)
   }
 
   for (const task of tasksById.values()) {
@@ -331,7 +364,16 @@ function validateAndReadSource(envelopes, readScriptContent, includeEnvironments
   const environments = includeEnvironments
     ? [...environmentsById.values()].sort((a, b) => compareStableText(a.id, b.id)).map((variable) => ({ ...variable }))
     : []
-  return { environments, schemaVersion: CURRENT_SCHEMA_VERSION, scriptContents, scripts, settings: projectSettings(settings), tasks }
+  return {
+    environments,
+    schemaVersion: BACKUP_DATA_SCHEMA_VERSION,
+    scriptContents,
+    scripts,
+    scriptFolders: structuredClone(snapshot.scriptFolders.data),
+    dependencies: structuredClone(snapshot.dependencies.data),
+    settings: projectSettings(settings),
+    tasks
+  }
 }
 
 /**
@@ -348,10 +390,15 @@ function buildExportPackageFiles(input) {
   const source = validateAndReadSource(envelopes, readScriptContent, options.includeEnvironments)
 
   const scripts = source.scripts
+  const scriptFolders = source.scriptFolders
+  const dependencies = source.dependencies
   const tasks = source.tasks
   const environments = source.environments.map((variable) => projectEnvironment(variable, options))
   const settings = source.settings
   const data = {
+    dependencies: { schemaVersion: source.schemaVersion, data: dependencies },
+    environments: { schemaVersion: source.schemaVersion, data: environments },
+    scriptFolders: { schemaVersion: source.schemaVersion, data: scriptFolders },
     scripts: { schemaVersion: source.schemaVersion, data: scripts },
     tasks: { schemaVersion: source.schemaVersion, data: tasks },
     environments: { schemaVersion: source.schemaVersion, data: environments },
@@ -359,7 +406,9 @@ function buildExportPackageFiles(input) {
   }
 
   const packageFiles = [
+    { path: 'data/dependencies.json', content: serializeExportJson(data.dependencies) },
     { path: 'data/environments.json', content: serializeExportJson(data.environments) },
+    { path: 'data/scriptFolders.json', content: serializeExportJson(data.scriptFolders) },
     { path: 'data/scripts.json', content: serializeExportJson(data.scripts) },
     { path: 'data/settings.json', content: serializeExportJson(data.settings) },
     { path: 'data/tasks.json', content: serializeExportJson(data.tasks) },
@@ -385,6 +434,8 @@ function buildExportPackageFiles(input) {
     exportedAt,
     entities: {
       scripts: scripts.length,
+      scriptFolders: scriptFolders.length,
+      dependencies: dependencies.length,
       tasks: tasks.length,
       environments: environments.length
     },
