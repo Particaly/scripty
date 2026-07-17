@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { findExecutable } = require('./executable-finder')
 
 const WINDOWS_DIRECT_EXTENSIONS = new Set(['.com', '.exe'])
 const WINDOWS_SHELL_EXTENSIONS = new Set(['.bat', '.cmd', '.ps1'])
@@ -87,6 +88,21 @@ function resolveMiseNode(kind, executable, platform, environment, homeDirectory,
 }
 
 /**
+ * 通用的可执行文件查找（异步）
+ * 使用新的通用查找器，支持跨平台一致的查找逻辑
+ */
+async function resolveExecutableAsync(executable, platform, environment, homeDirectory) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix
+  if (!isBareCommand(executable, pathApi)) return null
+
+  return await findExecutable(executable, {
+    platform,
+    environment,
+    homeDirectory
+  })
+}
+
+/**
  * Creates a deterministic interpreter resolver for preload readiness checks and process launches.
  * Explicit paths are authoritative; bare commands use the host PATH before the macOS mise Node fallback.
  */
@@ -111,6 +127,36 @@ function createInterpreterResolver({
       if (!isBareCommand(executable, pathApi)) return null
       return resolveFromPath(executable, platform, environment, fileSystem)
         ?? resolveMiseNode(kind, executable, platform, environment, homeDirectory, fileSystem)
+    },
+
+    /**
+     * 异步解析解释器路径（使用通用查找器）
+     * 适用于需要更可靠查找的场景（如通过登录 shell 或 where.exe）
+     * @param {string} kind - 语言类型 ('javascript' 或 'python')
+     * @param {string} configuredExecutable - 配置的可执行文件名或路径
+     * @returns {Promise<string|null>} 可执行文件的绝对路径，未找到时返回 null
+     */
+    async resolveAsync(kind, configuredExecutable) {
+      if (typeof configuredExecutable !== 'string') return null
+      const executable = configuredExecutable.trim()
+      if (!executable) return null
+
+      // 处理绝对路径
+      if (pathApi.isAbsolute(executable)) {
+        if (platform === 'win32' && WINDOWS_SHELL_EXTENSIONS.has(path.win32.extname(executable).toLocaleLowerCase())) return null
+        return isRunnableFile(executable, platform, fileSystem) ? executable : null
+      }
+
+      // 处理相对路径（不允许）
+      if (!isBareCommand(executable, pathApi)) return null
+
+      // 先尝试通用异步查找器（更可靠）
+      const asyncResult = await resolveExecutableAsync(executable, platform, environment, homeDirectory)
+      if (asyncResult) return asyncResult
+
+      // 回退到同步方法
+      return resolveFromPath(executable, platform, environment, fileSystem)
+        ?? resolveMiseNode(kind, executable, platform, environment, homeDirectory, fileSystem)
     }
   }
 }
@@ -122,5 +168,6 @@ module.exports = {
   isRunnableFile,
   readEnvironmentValue,
   resolveFromPath,
-  resolveMiseNode
+  resolveMiseNode,
+  resolveExecutableAsync
 }

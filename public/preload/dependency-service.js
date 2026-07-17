@@ -7,6 +7,7 @@ const { spawn } = require('node:child_process')
 const { atomicWriteFile } = require('./file-repositories')
 const { RepositoryError } = require('./metadata-repository')
 const { invoke } = require('./task-service')
+const { findExecutable } = require('./executable-finder')
 
 const DEPENDENCY_KINDS = ['node', 'python']
 const MAX_INSTALL_OUTPUT_BYTES = 256 * 1024
@@ -272,15 +273,30 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
         const nodeReference = settings.defaultInterpreters.javascript ?? 'node'
         const nodeExecutable = interpreterResolver.resolve('javascript', nodeReference)
         if (!nodeExecutable) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '请先配置可用的 Node.js 解释器')
-        const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm'
+
+        // 使用通用查找器查找 npm
         const configuredNpmCli = options.npmCliPath
         const siblingNpmCli = resolveSiblingNpmCli(nodeExecutable, platform)
+
         if (configuredNpmCli || siblingNpmCli) {
           result = await runInstaller(nodeExecutable, [configuredNpmCli ?? siblingNpmCli, 'install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
         } else {
-          const npmExecutable = typeof nodeReference === 'string' && !path.isAbsolute(nodeReference)
-            ? interpreterResolver.resolve('javascript', npmCommand)
-            : null
+          // 使用通用查找器异步查找 npm
+          let npmExecutable = null
+          if (typeof nodeReference === 'string' && !path.isAbsolute(nodeReference)) {
+            // 先尝试同步解析
+            npmExecutable = interpreterResolver.resolve('javascript', platform === 'win32' ? 'npm.cmd' : 'npm')
+
+            // 如果同步解析失败，使用通用异步查找器
+            if (!npmExecutable) {
+              npmExecutable = await findExecutable(platform === 'win32' ? 'npm.cmd' : 'npm', {
+                platform,
+                environment: process.env,
+                homeDirectory: require('node:os').homedir()
+              })
+            }
+          }
+
           if (!npmExecutable) throw new RepositoryError('DEPENDENCY_INSTALL_FAILED', '未找到与所选 Node.js 对应的 npm，请选择包含 npm 的 Node.js 安装')
           result = await runInstaller(npmExecutable, ['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
         }
@@ -289,6 +305,8 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
         const basePython = interpreterResolver.resolve('python', settings.defaultInterpreters.python ?? 'python')
         if (!basePython) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '请先配置可用的 Python 解释器')
         await runInstaller(basePython, ['-m', 'venv', path.join(stagingRoot, '.venv')], { cwd: stagingRoot, env: process.env }, spawnProcess)
+
+        // Python pip 已经内置在 venv 中，无需额外查找
         result = await runInstaller(getVirtualEnvironmentExecutable(stagingRoot, platform), ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', path.join(stagingRoot, PYTHON_MANIFEST_FILE)], { cwd: stagingRoot, env: process.env }, spawnProcess)
       }
       const targets = kind === 'node' ? ['node_modules', 'package-lock.json'] : ['.venv']
