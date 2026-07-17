@@ -289,11 +289,9 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
         ? 'SCRIPT_MISSING'
         : evaluation.readiness === 'interpreter_unavailable'
           ? 'INTERPRETER_UNAVAILABLE'
-          : evaluation.readiness === 'dependency_environment_stale'
-            ? 'DEPENDENCY_ENVIRONMENT_STALE'
-            : evaluation.readiness === 'invalid_cron'
-              ? 'INVALID_CRON'
-              : 'PATH_NOT_ALLOWED'
+          : evaluation.readiness === 'invalid_cron'
+            ? 'INVALID_CRON'
+            : 'PATH_NOT_ALLOWED'
       throw new RepositoryError(code, '任务配置当前不可运行')
     }
     return { task, script, resolvedExecutable }

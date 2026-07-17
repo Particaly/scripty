@@ -23,6 +23,21 @@ function getVirtualEnvironmentExecutable(rootDirectory, platform = process.platf
     : path.join(rootDirectory, '.venv', 'bin', 'python')
 }
 
+/** Locates npm's bundled CLI relative to a resolved Node binary across POSIX and Windows install layouts. */
+function resolveSiblingNpmCli(nodeExecutable, platform = process.platform, fileSystem = fs) {
+  const binDirectory = path.dirname(nodeExecutable)
+  const candidates = platform === 'win32'
+    ? [path.join(binDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js')]
+    : [
+        path.join(binDirectory, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+        path.join(binDirectory, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+      ]
+  for (const candidate of candidates) {
+    try { if (fileSystem.statSync(candidate).isFile()) return candidate } catch {}
+  }
+  return null
+}
+
 /** Prepends one directory to PATH while respecting Windows' case-insensitive environment keys. */
 function prependEnvironmentPath(environment, directory, platform = process.platform) {
   if (platform !== 'win32') return { ...environment, PATH: `${directory}${path.delimiter}${environment.PATH ?? ''}` }
@@ -259,8 +274,8 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
         if (!nodeExecutable) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '请先配置可用的 Node.js 解释器')
         const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm'
         const configuredNpmCli = options.npmCliPath
-        const siblingNpmCli = path.join(path.dirname(nodeExecutable), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-        if (configuredNpmCli || fs.existsSync(siblingNpmCli)) {
+        const siblingNpmCli = resolveSiblingNpmCli(nodeExecutable, platform)
+        if (configuredNpmCli || siblingNpmCli) {
           result = await runInstaller(nodeExecutable, [configuredNpmCli ?? siblingNpmCli, 'install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
         } else {
           const npmExecutable = typeof nodeReference === 'string' && !path.isAbsolute(nodeReference)
@@ -377,5 +392,6 @@ module.exports = {
   normalizeVersionSpec,
   prependEnvironmentPath,
   readInstalledVersions,
+  resolveSiblingNpmCli,
   runInstaller
 }

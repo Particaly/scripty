@@ -33,7 +33,6 @@ export type ErrorCode =
   | 'PATH_NOT_ALLOWED'
   | 'INTERPRETER_UNAVAILABLE'
   | 'DEPENDENCY_ENVIRONMENT_MISSING'
-  | 'DEPENDENCY_ENVIRONMENT_STALE'
   | 'DEPENDENCY_INSTALL_ACTIVE'
   | 'DEPENDENCY_INSTALL_FAILED'
   | 'SPAWN_FAILED'
@@ -85,7 +84,6 @@ export type TaskReadiness =
   | 'ready'
   | 'script_missing'
   | 'interpreter_unavailable'
-  | 'dependency_environment_stale'
   | 'invalid_cron'
   | 'invalid_working_directory'
 

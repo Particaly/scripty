@@ -79,7 +79,6 @@ const readinessOptions = [
   { label: '可运行', value: 'ready' },
   { label: '脚本缺失', value: 'script_missing' },
   { label: '解释器不可用', value: 'interpreter_unavailable' },
-  { label: '依赖待同步', value: 'dependency_environment_stale' },
   { label: 'Cron 无效', value: 'invalid_cron' },
   { label: '工作目录无效', value: 'invalid_working_directory' }
 ]
@@ -87,14 +86,12 @@ const readinessLabels: Record<TaskSummary['readiness'], string> = {
   ready: '可运行',
   script_missing: '脚本缺失',
   interpreter_unavailable: '解释器不可用',
-  dependency_environment_stale: '依赖待同步',
   invalid_cron: 'Cron 无效',
   invalid_working_directory: '工作目录无效'
 }
 const readinessGuidance: Record<Exclude<TaskSummary['readiness'], 'ready'>, { message: string; action: string }> = {
   script_missing: { message: '托管源码文件不存在，请重新导入脚本或为任务选择其他脚本。', action: '选择脚本' },
   interpreter_unavailable: { message: '解释器命令为空或本地文件不可用，请重新配置。', action: '配置解释器' },
-  dependency_environment_stale: { message: '共享依赖环境尚未同步或声明已变化，请先到依赖页同步。', action: '同步依赖' },
   invalid_cron: { message: 'Cron 不是有效的五段表达式，请修改计划。', action: '修改 Cron' },
   invalid_working_directory: { message: '工作目录不存在或不是目录，请修改或留空。', action: '修改目录' }
 }

@@ -59,9 +59,6 @@ function evaluateTaskReadiness(task, script, managedScriptRepository, interprete
   }
   const resolvedExecutable = resolveInterpreter(task, interpreterResolver)
   if (!resolvedExecutable) return { readiness: 'interpreter_unavailable', resolvedExecutable: null }
-  if (dependencyService && ['javascript', 'python'].includes(script.language) && !dependencyService.isEnvironmentReady(script.language === 'javascript' ? 'node' : 'python')) {
-    return { readiness: 'dependency_environment_stale', resolvedExecutable: null }
-  }
   if (!isValidFivePartCron(task.cron)) return { readiness: 'invalid_cron', resolvedExecutable: null }
   if (task.workingDirectory) {
     try {
