@@ -579,27 +579,27 @@ watch(
 
     <ul v-else class="task-list">
       <li v-for="task in filteredTasks" :key="task.id" class="task-row">
-        <div class="task-row__content">
+        <div class="task-row__header">
           <div class="task-row__title">
             <strong>{{ task.name }}</strong>
             <ZTag :type="getReadinessTagType(task.readiness)" size="small">{{ readinessLabels[task.readiness] }}</ZTag>
           </div>
-          <p>{{ task.scriptName }}<template v-if="task.note"> · {{ task.note }}</template></p>
-          <span>{{ task.cron ?? '仅手动运行' }}</span>
-          <div v-if="task.readiness !== 'ready'" class="task-issue" role="alert">
-            <span>{{ readinessGuidance[task.readiness].message }}</span>
-            <ZButton type="text" size="small" @click="resolveTaskIssue(task)">
-              {{ readinessGuidance[task.readiness].action }}
-            </ZButton>
-          </div>
-        </div>
-        <div class="task-row__controls">
           <div class="task-row__actions">
             <ZButton type="primary" size="small" :loading="startingTaskIds.has(task.id)" :disabled="task.readiness !== 'ready'" @click="runTask(task)">运行</ZButton>
             <ZButton type="text" size="small" @click="openEditDrawer(task)">编辑</ZButton>
             <ZButton type="text" size="small" @click="duplicateTask(task)">复制</ZButton>
             <ZButton type="danger" size="small" @click="removeTask(task)">删除</ZButton>
           </div>
+        </div>
+        <p class="task-row__desc" :title="task.note ? `${task.scriptName} · ${task.note}` : task.scriptName">{{ task.scriptName }}<template v-if="task.note"> · {{ task.note }}</template></p>
+        <div v-if="task.readiness !== 'ready'" class="task-issue" role="alert">
+          <span>{{ readinessGuidance[task.readiness].message }}</span>
+          <ZButton type="text" size="small" @click="resolveTaskIssue(task)">
+            {{ readinessGuidance[task.readiness].action }}
+          </ZButton>
+        </div>
+        <div class="task-row__footer">
+          <span class="task-row__schedule">{{ task.cron ?? '仅手动运行' }}</span>
           <div class="task-row__toggle">
             <span>{{ task.enabled ? '已启用' : '已禁用' }}</span>
             <ZSwitch :model-value="task.enabled" :disabled="changingTaskIds.has(task.id)" size="small" :aria-label="`${task.enabled ? '禁用' : '启用'}任务 ${task.name}`" @update:model-value="(enabled) => changeEnabled(task, enabled)" />
@@ -620,22 +620,8 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 10px;
   color: var(--warning-color);
   font-size: 13px;
-}
-
-.task-row__controls {
-  display: grid;
-  flex: 0 0 auto;
-  justify-items: end;
-  gap: 12px;
-}
-
-/* .task-message lives in shared.scss; here we style the task row paragraph specifically. */
-.task-row p {
-  margin: 0;
-  color: var(--text-secondary);
 }
 
 .task-filters {
@@ -655,34 +641,66 @@ watch(
 
 .task-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
+  flex-direction: column;
+  gap: 10px;
   padding: 18px 20px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
   background: var(--card-bg);
+  width: 100%;
+  overflow: hidden;
 }
 
-.task-row__content {
-  min-width: 0;
+.task-row__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.task-row__title,
-.task-row__toggle {
+.task-row__title {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
-.task-row__content p {
-  margin-top: 7px;
+.task-row__title strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-row__content > span,
+.task-row__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-row__desc {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.task-row__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.task-row__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.task-row__schedule,
 .task-row__toggle > span {
   color: var(--text-secondary);
   font-size: 12px;
@@ -754,18 +772,6 @@ watch(
 @media (max-width: 760px) {
   .task-filters {
     grid-template-columns: 1fr;
-  }
-
-  .task-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .task-row__controls {
-    width: 100%;
-    align-items: center;
-    grid-template-columns: 1fr auto;
-    justify-items: start;
   }
 }
 </style>

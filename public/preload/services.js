@@ -25,6 +25,7 @@ const { createSchedulerService, registerSchedulerLifecycle } = require('./schedu
 const { createScriptsApi } = require('./script-service')
 const { createSettingsApi } = require('./settings-service')
 const { createTasksApi } = require('./task-service')
+const { registerScriptyMcpTools } = require('./mcp-tools')
 
 /** Resolves Scripty's fixed device-local directory layout from the ZTools user data path. */
 function getDataPaths() {
@@ -102,6 +103,9 @@ window.scripty = {
   settings: createSettingsApi(metadataRepository, window.ztools),
   tasks: tasksApi
 }
+
+// 向 ZTools 宿主注册 MCP 工具，使脚本与任务能力可经宿主 MCP 端点对外暴露。
+registerScriptyMcpTools(window.scripty, window.ztools)
 
 module.exports = {
   dataPaths,
