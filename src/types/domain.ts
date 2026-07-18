@@ -5,7 +5,7 @@ export type EntityId = string
 export type IsoDateTime = string
 
 export type ScriptLanguage = 'javascript' | 'python' | 'powershell' | 'shell'
-export type RunTrigger = 'manual' | 'cron' | 'retry'
+export type RunTrigger = 'manual' | 'cron' | 'retry' | 'all'
 export type RunStatus =
   | 'starting'
   | 'running'
@@ -14,6 +14,7 @@ export type RunStatus =
   | 'timed_out'
   | 'stopped'
   | 'interrupted'
+  | 'all'
 export type ConcurrencyPolicy = 'forbid' | 'limited'
 export type EnvironmentScope = 'global' | 'task'
 

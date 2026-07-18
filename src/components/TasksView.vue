@@ -558,7 +558,7 @@ watch(
       </div>
 
       <div class="task-filters" aria-label="任务筛选">
-        <ZInput v-model="search" type="search" placeholder="搜索任务、脚本或备注" clearable />
+        <ZInput v-model="search" type="search" placeholder="搜索任务、脚本" clearable />
         <ZSelect v-model="enabledFilter" :options="enabledOptions" aria-label="启用状态" />
         <ZSelect v-model="readinessFilter" :options="readinessOptions" aria-label="可运行状态" />
       </div>

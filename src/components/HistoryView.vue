@@ -10,8 +10,8 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = 20
 const search = ref('')
-const status = ref<RunStatus | ''>('')
-const trigger = ref<RunTrigger | ''>('')
+const status = ref<RunStatus | ''>('all')
+const trigger = ref<RunTrigger | ''>('all')
 const loading = ref(false)
 const detailVisible = ref(false)
 const selected = ref<RunRecord | null>(null)
@@ -22,10 +22,10 @@ const retryingId = ref<string | null>(null)
 const cleaning = ref(false)
 const triggerLabels = { manual: '手动', cron: '定时', retry: '重跑' } as const
 const statusOptions = [
-  { label: '全部状态', value: '' }, { label: '成功', value: 'success' }, { label: '失败', value: 'failed' },
+  { label: '全部状态', value: 'all' }, { label: '成功', value: 'success' }, { label: '失败', value: 'failed' },
   { label: '超时', value: 'timed_out' }, { label: '已停止', value: 'stopped' }, { label: '异常中断', value: 'interrupted' }
 ]
-const triggerOptions = [{ label: '全部来源', value: '' }, { label: '手动', value: 'manual' }, { label: '定时', value: 'cron' }, { label: '重跑', value: 'retry' }]
+const triggerOptions = [{ label: '全部来源', value: 'all' }, { label: '手动', value: 'manual' }, { label: '定时', value: 'cron' }, { label: '重跑', value: 'retry' }]
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 let historyRequestSequence = 0
 let unsubscribeRuns: (() => void) | null = null
@@ -138,7 +138,7 @@ onBeforeUnmount(disposeHistory)
     <div class="view-toolbar">
       <div class="section-heading"><div><h2 id="history-heading">运行历史</h2></div><div class="section-heading__actions"><ZTag type="info">{{ total }} 条</ZTag><ZButton size="small" :loading="cleaning" @click="cleanBySettings">按保留策略清理</ZButton></div></div>
       <div class="history-filters">
-        <ZInput v-model="search" placeholder="搜索任务、脚本或错误" />
+        <ZInput v-model="search" placeholder="搜索任务、脚本" />
         <ZSelect v-model="status" :options="statusOptions" />
         <ZSelect v-model="trigger" :options="triggerOptions" />
       </div>
