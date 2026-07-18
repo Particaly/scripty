@@ -38,11 +38,13 @@ function cmType(detail: string | undefined): string {
  * `collectCompletions` already filters and ranks by prefix, so this source opts
  * out of CM's own filtering (`filter: false`) and returns the pre-sorted list.
  */
-function buildCompletionSource(getLanguage: () => ScriptLanguage) {
+function buildCompletionSource(getLanguage: () => ScriptLanguage | null) {
   return (ctx: CompletionContext): CompletionResult | null => {
     const word = ctx.matchBefore(/[\w$.-]+/)
     if (!word || (word.from === word.to && !ctx.explicit)) return null
     const language = getLanguage()
+    // Read-only formats (json, yaml, ...) have no completion tables.
+    if (!language) return null
     const items = collectCompletions(ctx.state.doc.toString(), language, word.text)
     if (items.length === 0) return null
     const options = items.map((item: CompletionItem) => ({
@@ -55,7 +57,7 @@ function buildCompletionSource(getLanguage: () => ScriptLanguage) {
 }
 
 /** Autocomplete extension wired to the project's language-aware completion tables. */
-export const cmAutocomplete = (getLanguage: () => ScriptLanguage) =>
+export const cmAutocomplete = (getLanguage: () => ScriptLanguage | null) =>
   autocompletion({
     override: [buildCompletionSource(getLanguage)],
     activateOnTyping: true,

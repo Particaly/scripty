@@ -101,7 +101,16 @@ const defaultExecutables: Record<ScriptLanguage, string> = {
   powershell: 'powershell',
   shell: 'sh'
 }
-const scriptOptions = computed(() => scripts.value.map(script => ({ label: script.name, value: script.id })))
+/** Extensions Scripty can execute; mirrors the preload RUNNABLE_SCRIPT_EXTENSIONS allowlist. */
+const RUNNABLE_SCRIPT_EXTENSIONS = new Set(['js', 'mjs', 'cjs', 'py', 'ps1', 'sh'])
+/** True when a script's path ends in a runnable extension, so it can back a task. */
+function isRunnableScript(script: ScriptSummary): boolean {
+  const ext = script.relativePath.split('.').pop()?.toLocaleLowerCase() ?? ''
+  return script.relativePath.includes('.') && RUNNABLE_SCRIPT_EXTENSIONS.has(ext)
+}
+// 新建脚本已放开扩展名限制,任务下拉只展示扩展名受支持(可执行)的脚本。
+const runnableScripts = computed(() => scripts.value.filter(isRunnableScript))
+const scriptOptions = computed(() => runnableScripts.value.map(script => ({ label: script.name, value: script.id })))
 const filteredTasks = computed(() => {
   const keyword = search.value.trim().toLocaleLowerCase()
   return tasks.value.filter((task) => {
@@ -275,7 +284,7 @@ function openCreateDrawer() {
   argsText.value = ''
   timeoutSeconds.value = ''
   hydrateScheduleState(null)
-  if (scripts.value[0]) selectScript(scripts.value[0].id)
+  if (runnableScripts.value[0]) selectScript(runnableScripts.value[0].id)
   drawerVisible.value = true
 }
 

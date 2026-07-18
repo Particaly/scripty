@@ -14,6 +14,8 @@ const SCRIPT_EXTENSIONS = Object.freeze({
   powershell: 'ps1',
   shell: 'sh'
 })
+/** Extensions Scripty knows how to run; a task may only reference scripts carrying one of these. */
+const RUNNABLE_SCRIPT_EXTENSIONS = Object.freeze(new Set(['js', 'mjs', 'cjs', 'py', 'ps1', 'sh']))
 const DEFAULT_MAX_SCRIPT_BYTES = 10 * 1024 * 1024
 const DEFAULT_MAX_LOG_CHUNK_BYTES = 256 * 1024
 
@@ -60,10 +62,14 @@ function normalizeManagedScriptPath(relativePath, language) {
   if (RESERVED_SCRIPT_ROOT_NAMES.has(segments[0].toLocaleLowerCase())) {
     throw new RepositoryError('PATH_NOT_ALLOWED', '脚本路径与依赖环境目录冲突')
   }
-  const extension = path.posix.extname(normalized).slice(1).toLocaleLowerCase()
-  const allowedExtensions = language === 'javascript' ? ['js', 'mjs', 'cjs'] : [SCRIPT_EXTENSIONS[language]]
-  if (!allowedExtensions.includes(extension)) throw new RepositoryError('VALIDATION_ERROR', '脚本扩展名与语言不匹配')
+  // 脚本扩展名不再受语言约束：语言由创建时的显式选择决定，路径只做安全校验。
   return normalized
+}
+
+/** Reports whether a script's relative path ends in an extension Scripty can execute as a task. */
+function isRunnableScriptPath(relativePath) {
+  const extension = path.posix.extname(String(relativePath ?? '')).slice(1).toLocaleLowerCase()
+  return RUNNABLE_SCRIPT_EXTENSIONS.has(extension)
 }
 
 /** Creates a readable path from the script name while retaining the language's conventional extension. */
@@ -635,12 +641,14 @@ module.exports = {
   LogFileRepository,
   ManagedScriptRepository,
   RESERVED_SCRIPT_ROOT_NAMES,
+  RUNNABLE_SCRIPT_EXTENSIONS,
   SCRIPT_EXTENSIONS,
   atomicWriteFile,
   calculateSha256,
   createLogFileName,
   createManagedScriptFileName,
   createManagedScriptPath,
+  isRunnableScriptPath,
   normalizeManagedFolderPath,
   normalizeManagedScriptPath,
   resolveManagedScriptPath

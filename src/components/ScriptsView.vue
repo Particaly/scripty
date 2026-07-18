@@ -3,6 +3,7 @@ import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'v
 import { ZButton } from 'ztools-ui'
 import ZTree, { type TreeOption, type RenderFn } from './ZTree.vue'
 import { createEditor, type CodeMirrorHandle } from '../composables/useCodeMirror'
+import { fileIconUrl, folderIconUrl } from '../composables/fileIcons'
 import type { ScriptFolderSummary, ScriptSummary, SelectedScriptFile } from '../types/api'
 import type { ScriptLanguage } from '../types/domain'
 
@@ -44,9 +45,11 @@ const languageOptions = [
 ]
 
 /**
- * Maps a file extension to the Scripty language it belongs to. Kept in sync with
- * the preload EXTENSION_LANGUAGES table so the editor infers language the same way
- * the backend validates script paths.
+ * Maps a recognized file extension to its Scripty execution language. This only
+ * fills the metadata `language` field the backend requires; unrecognized extensions
+ * (e.g. .json, .log) default to javascript since such scripts are never runnable as
+ * tasks. Syntax highlighting is decoupled from this and driven by the filename inside
+ * the editor composable.
  */
 const EXTENSION_LANGUAGES: Record<string, ScriptLanguage> = {
   js: 'javascript',
@@ -62,8 +65,16 @@ const editorRelativePath = computed(() =>
   editorDir.value ? `${editorDir.value}/${editorFileName.value}` : editorFileName.value
 )
 
-/** Derives the editor language from the current filename's extension. */
+/** The stored language of the script currently being edited; unused while creating. */
+const pinnedLanguage = ref<ScriptLanguage>('javascript')
+
+/**
+ * Execution language stored in metadata. On edit it stays pinned to the script's
+ * original language (the backend forbids changing it); on create it is inferred from
+ * the extension, defaulting to javascript for non-runnable extensions.
+ */
 const editorLanguage = computed<ScriptLanguage>(() => {
+  if (editingScriptId.value) return pinnedLanguage.value
   const ext = editorFileName.value.split('.').pop()?.toLocaleLowerCase() ?? ''
   return EXTENSION_LANGUAGES[ext] ?? 'javascript'
 })
@@ -85,7 +96,7 @@ function mountEditor() {
   if (!host) return
   editorHandle = createEditor(host, {
     doc: content.value,
-    language: editorLanguage.value,
+    fileName: editorFileName.value,
     onChange: (doc) => {
       content.value = doc
     },
@@ -103,7 +114,7 @@ function unmountEditor() {
 
 // The drawer uses displayDirective 'if' by default, so its DOM (and thus the CM
 // host) is created on open and destroyed on close. Mount/destroy in lockstep,
-// and reconfigure the language whenever the filename extension changes.
+// and reconfigure highlighting whenever the filename extension changes.
 watch(editorVisible, async (visible) => {
   if (visible) {
     await nextTick()
@@ -113,8 +124,8 @@ watch(editorVisible, async (visible) => {
   }
 })
 
-watch(editorLanguage, (language) => {
-  editorHandle?.setLanguage(language)
+watch(editorFileName, (fileName) => {
+  editorHandle?.setFileName(fileName)
 })
 
 onBeforeUnmount(unmountEditor)
@@ -126,16 +137,21 @@ interface ScriptTreeBranch {
   scripts: ScriptSummary[]
 }
 
-/** Folder/file prefix icons rendered as inline SVG so they follow the host theme via currentColor. */
-const FolderPrefix = () =>
-  h('svg', { class: 'ztree-node__icon ztree-node__icon--folder', viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' }, [
-    h('path', { d: 'M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
-  ])
-const FilePrefix = () =>
-  h('svg', { class: 'ztree-node__icon ztree-node__icon--file', viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' }, [
-    h('path', { d: 'M14 3V7C14 7.26522 14.1054 7.51957 14.2929 7.70711C14.4804 7.89464 14.7348 8 15 8H19', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
-    h('path', { d: 'M17 21H7C6.46957 21 5.96086 20.7893 5.58579 20.4142C5.21071 20.0391 5 19.5304 5 19V5C5 4.46957 5.21071 3.96086 5.58579 3.58579C5.96086 3.21071 6.46957 3 7 3H14L19 8V19C19 19.5304 18.7893 20.0391 18.4142 20.4142C18.0391 20.7893 17.5304 21 17 21Z', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
-  ])
+/**
+ * File/folder prefix icons resolved from material-icon-theme and rendered as <img>.
+ * The SVGs carry their own brand colors, so they are shown as images rather than
+ * inlined + recolored. Folder icons swap to their open variant while expanded, which
+ * stays reactive because the closure reads the `expandedKeys` ref during render.
+ */
+function iconImg(url: string) {
+  return h('img', { class: 'ztree-node__icon-img', src: url, 'aria-hidden': 'true', draggable: false })
+}
+function makeFolderPrefix(folderName: string, optionKey: string) {
+  return () => iconImg(folderIconUrl(folderName, expandedKeys.value.includes(optionKey)))
+}
+function makeFilePrefix(fileName: string) {
+  return () => iconImg(fileIconUrl(fileName))
+}
 
 /** Builds recursive tree branches from persisted folder metadata and stable script paths. */
 const treeBranches = computed<ScriptTreeBranch[]>(() => {
@@ -168,11 +184,13 @@ function folderToOption(branch: ScriptTreeBranch): TreeOption {
     ...branch.folders.map(folderToOption),
     ...branch.scripts.map(scriptToOption)
   ]
+  const optionKey = folderOptionKey(branch.folder.id)
+  const folderName = branch.folder.relativePath.split('/').pop() || branch.folder.relativePath
   return {
-    key: folderOptionKey(branch.folder.id),
-    label: branch.folder.relativePath.split('/').pop() || branch.folder.relativePath,
+    key: optionKey,
+    label: folderName,
     children,
-    prefix: FolderPrefix,
+    prefix: makeFolderPrefix(folderName, optionKey),
     __folder: branch.folder,
     __cut: false
   } as TreeOption
@@ -184,7 +202,7 @@ function scriptToOption(script: ScriptSummary): TreeOption {
     key: `script:${script.id}`,
     label: script.relativePath.split('/').pop() || script.name,
     isLeaf: true,
-    prefix: FilePrefix,
+    prefix: makeFilePrefix(script.relativePath.split('/').pop() || script.name),
     __script: script,
     __cut: false
   } as TreeOption
@@ -542,6 +560,7 @@ function openCreateEditor(intoDir = '') {
   content.value = ''
   editorDir.value = intoDir
   editorFileName.value = 'new-script.js'
+  pinnedLanguage.value = 'javascript'
   editorVisible.value = true
 }
 
@@ -554,6 +573,8 @@ async function openEditEditor(script: ScriptSummary) {
   const segments = result.data.relativePath.split('/')
   editorFileName.value = segments.pop() || result.data.relativePath
   editorDir.value = segments.join('/')
+  // 已有脚本语言不可更改；editorLanguage 在编辑态固定读取 pinnedLanguage。
+  pinnedLanguage.value = result.data.language
   editorVisible.value = true
 }
 
@@ -769,10 +790,11 @@ onMounted(loadScripts)
 }
 
 .script-editor {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   /* Fills the drawer body (stretched via ZDrawerContent's body-content-style)
-     so the editor does not force the drawer to scroll. */
+     so the editor does not force the drawer to scroll. The optional language
+     picker sits between the filename and the editor without a fixed row count. */
   height: 100%;
   min-height: 0;
   gap: 16px;
@@ -830,6 +852,15 @@ onMounted(loadScripts)
      focus ring on node rows (block-line makes rows width:100%, touching the
      content box edges) is not clipped by `overflow-y: auto`. */
   padding: 8px 8px 12px;
+}
+
+/* material-icon-theme SVGs rendered as <img>; fixed box keeps rows aligned. */
+.script-tree :deep(.ztree-node__icon-img) {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
 }
 
 /* inline rename input rendered in place of the static label */

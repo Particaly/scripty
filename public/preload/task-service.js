@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const { randomUUID } = require('node:crypto')
 const { isValidFivePartCron, parseFivePartCron } = require('./cron-utils')
+const { isRunnableScriptPath } = require('./file-repositories')
 const { createInterpreterResolver } = require('./interpreter-resolver')
 const { RepositoryError } = require('./metadata-repository')
 
@@ -82,8 +83,14 @@ function normalizeTaskDraft(input, scripts) {
   const fieldErrors = {}
   const name = typeof input?.name === 'string' ? input.name.trim() : ''
   if (!name || name.length > 100) fieldErrors.name = '任务名称应为 1 到 100 个字符'
-  if (typeof input?.scriptId !== 'string' || !scripts.some(script => script.id === input.scriptId)) {
+  const selectedScript = typeof input?.scriptId === 'string'
+    ? scripts.find(script => script.id === input.scriptId)
+    : undefined
+  if (!selectedScript) {
     fieldErrors.scriptId = '请选择已存在的托管脚本'
+  } else if (!isRunnableScriptPath(selectedScript.relativePath)) {
+    // 新建脚本已放开扩展名限制,但任务只能引用扩展名受支持(可执行)的脚本。
+    fieldErrors.scriptId = '所选脚本的扩展名不受支持,无法作为任务运行'
   }
   const kind = input?.interpreter?.kind
   if (!['javascript', 'python', 'powershell', 'shell'].includes(kind)) {
