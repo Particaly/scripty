@@ -7,7 +7,6 @@ const { spawn } = require('node:child_process')
 const { atomicWriteFile } = require('./file-repositories')
 const { RepositoryError } = require('./metadata-repository')
 const { invoke } = require('./task-service')
-const { findExecutable } = require('./executable-finder')
 
 const DEPENDENCY_KINDS = ['node', 'python']
 const MAX_INSTALL_OUTPUT_BYTES = 256 * 1024
@@ -37,6 +36,36 @@ function resolveSiblingNpmCli(nodeExecutable, platform = process.platform, fileS
     try { if (fileSystem.statSync(candidate).isFile()) return candidate } catch {}
   }
   return null
+}
+
+/**
+ * Spawns the discovered Node binary to ask it for process.execPath, then re-runs the sibling
+ * lookup against the real path. Shims (mise, Volta, Scoop, Bun) forward execution to the real
+ * Node install, which sets execPath to its own location — re-running the sibling lookup from
+ * there finds npm-cli.js even when the shim directory itself has no node_modules sibling.
+ */
+function resolveNpmCliViaNode(nodeExecutable, platform = process.platform, spawnProcess = spawn, fileSystem = fs) {
+  return new Promise(resolve => {
+    let child
+    try {
+      child = spawnProcess(nodeExecutable, ['-e', 'process.stdout.write(process.execPath)'], {
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    } catch {
+      resolve(null)
+      return
+    }
+    let output = ''
+    child.stdout?.on('data', chunk => { output += chunk.toString('utf8') })
+    const finish = realNode => {
+      if (!realNode) { resolve(null); return }
+      resolve(resolveSiblingNpmCli(realNode, platform, fileSystem))
+    }
+    child.once('error', () => finish(null))
+    child.once('close', () => finish(output.trim()))
+  })
 }
 
 /** Prepends one directory to PATH while respecting Windows' case-insensitive environment keys. */
@@ -269,36 +298,18 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
       let result
       if (kind === 'node') {
         atomicWriteFile(path.join(stagingRoot, NODE_MANIFEST_FILE), Buffer.from(fs.readFileSync(manifestPaths.node)))
-        const nodeReference = 'node'
-        const nodeExecutable = interpreterResolver.resolve('javascript', nodeReference)
+        const nodeExecutable = interpreterResolver.resolve('javascript', 'node')
         if (!nodeExecutable) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '未找到可用的 Node.js 解释器')
 
-        // 使用通用查找器查找 npm
         const configuredNpmCli = options.npmCliPath
         const siblingNpmCli = resolveSiblingNpmCli(nodeExecutable, platform)
-
-        if (configuredNpmCli || siblingNpmCli) {
-          result = await runInstaller(nodeExecutable, [configuredNpmCli ?? siblingNpmCli, 'install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
-        } else {
-          // 使用通用查找器异步查找 npm
-          let npmExecutable = null
-          if (typeof nodeReference === 'string' && !path.isAbsolute(nodeReference)) {
-            // 先尝试同步解析
-            npmExecutable = interpreterResolver.resolve('javascript', platform === 'win32' ? 'npm.cmd' : 'npm')
-
-            // 如果同步解析失败，使用通用异步查找器
-            if (!npmExecutable) {
-              npmExecutable = await findExecutable(platform === 'win32' ? 'npm.cmd' : 'npm', {
-                platform,
-                environment: process.env,
-                homeDirectory: require('node:os').homedir()
-              })
-            }
-          }
-
-          if (!npmExecutable) throw new RepositoryError('DEPENDENCY_INSTALL_FAILED', '未找到与自动发现的 Node.js 对应的 npm，请确认 npm 已安装且可从终端调用')
-          result = await runInstaller(npmExecutable, ['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
-        }
+        // 当自动发现的 node 是 shim（mise、Volta、Scoop 等）时，sibling lookup 命中不了，
+        // 因为 shim 自己的目录里没有 node_modules。这时 spawn 一次让真实 node 报告 execPath，
+        // 再用真实路径走 sibling lookup。
+        const fallbackNpmCli = configuredNpmCli || siblingNpmCli ? null : await resolveNpmCliViaNode(nodeExecutable, platform, spawnProcess)
+        const npmCli = configuredNpmCli ?? siblingNpmCli ?? fallbackNpmCli
+        if (!npmCli) throw new RepositoryError('DEPENDENCY_INSTALL_FAILED', '未找到与自动发现的 Node.js 对应的 npm，请确认 npm 已安装且可从终端调用')
+        result = await runInstaller(nodeExecutable, [npmCli, 'install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
       } else {
         atomicWriteFile(path.join(stagingRoot, PYTHON_MANIFEST_FILE), Buffer.from(fs.readFileSync(manifestPaths.python)))
         const basePython = interpreterResolver.resolve('python', 'python')
@@ -409,6 +420,7 @@ module.exports = {
   normalizeVersionSpec,
   prependEnvironmentPath,
   readInstalledVersions,
+  resolveNpmCliViaNode,
   resolveSiblingNpmCli,
   runInstaller
 }
