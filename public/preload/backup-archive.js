@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
+const { Readable } = require('node:stream')
 const yazl = require('yazl')
 const { RepositoryError, mapFileSystemError } = require('./metadata-repository')
 
@@ -29,7 +30,7 @@ function validateArchiveFiles(files) {
   }
 }
 
-/** Streams controlled logical package files into a temporary ZIP and atomically replaces the chosen target. */
+/** Streams controlled logical package files through yazl's read-stream path into a temporary ZIP and atomically replaces the chosen target. */
 async function writeBackupArchive(files, targetPath, options = {}) {
   validateArchiveFiles(files)
   if (typeof targetPath !== 'string' || !path.isAbsolute(targetPath)) {
@@ -48,7 +49,11 @@ async function writeBackupArchive(files, targetPath, options = {}) {
     })
     zipFile.outputStream.pipe(output)
     for (const file of files) {
-      zipFile.addBuffer(file.content, file.path, { mtime: ZIP_ENTRY_DATE, mode: 0o600 })
+      zipFile.addReadStream(
+        Readable.from([file.content]),
+        file.path,
+        { size: file.content.length, mtime: ZIP_ENTRY_DATE, mode: 0o600 }
+      )
     }
     zipFile.end()
     await completed

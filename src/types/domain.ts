@@ -95,7 +95,6 @@ export interface Settings {
   defaultTimeoutMs: number
   defaultConcurrency: ConcurrencyConfig
   logRetention: LogRetention
-  defaultInterpreters: Record<ScriptLanguage, string | null>
   defaultWorkingDirectory: string | null
   schedulerNoticeAcknowledged: boolean
   updatedAt: IsoDateTime

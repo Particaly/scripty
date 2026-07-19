@@ -52,7 +52,7 @@ function createHistoryApi(metadataRepository, logFileRepository, runsApi) {
       })
     },
 
-    /** Removes terminal records and controlled logs by task, age, and per-task retention count. */
+    /** Removes persisted run records and controlled logs, optionally narrowing the deletion by task, age, or per-task count. */
     clear(input = {}) {
       return invoke(() => {
         const taskId = typeof input.taskId === 'string' && input.taskId ? input.taskId : null
@@ -60,9 +60,11 @@ function createHistoryApi(metadataRepository, logFileRepository, runsApi) {
         const olderThan = input.olderThan === undefined ? null : input.olderThan
         if (maxRunsPerTask !== null && (!Number.isInteger(maxRunsPerTask) || maxRunsPerTask < 0)) throw new RepositoryError('VALIDATION_ERROR', '日志保留数量必须是非负整数')
         if (olderThan !== null && (typeof olderThan !== 'string' || Number.isNaN(Date.parse(olderThan)))) throw new RepositoryError('VALIDATION_ERROR', '日志清理时间无效')
-        if (!taskId && maxRunsPerTask === null && olderThan === null) throw new RepositoryError('VALIDATION_ERROR', '请选择至少一个日志清理条件')
         const records = metadataRepository.read('runRecords')
         const removeIds = new Set()
+        if (!taskId && maxRunsPerTask === null && olderThan === null) {
+          for (const record of records) removeIds.add(record.id)
+        }
         if (taskId) for (const record of records) if (record.taskId === taskId) removeIds.add(record.id)
         if (olderThan) for (const record of records) if ((record.finishedAt ?? record.startedAt) < olderThan) removeIds.add(record.id)
         if (maxRunsPerTask !== null) {

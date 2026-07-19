@@ -20,8 +20,8 @@ function mergeById(local, imported) {
   return [...result.values()]
 }
 
-/** Applies local device fields and portable command defaults without silently enabling imported schedules. */
-function materializeTasks(importedTasks, localTasks, defaultInterpreters) {
+/** Applies local device fields and built-in interpreter commands without silently enabling imported schedules. */
+function materializeTasks(importedTasks, localTasks) {
   const localById = new Map(localTasks.map(task => [task.id, task]))
   return importedTasks.map(task => {
     const local = localById.get(task.id)
@@ -32,7 +32,7 @@ function materializeTasks(importedTasks, localTasks, defaultInterpreters) {
         kind: task.interpreter.kind,
         executable: sameKind
           ? local.interpreter.executable
-          : (defaultInterpreters[task.interpreter.kind] ?? PORTABLE_INTERPRETER_DEFAULTS[task.interpreter.kind] ?? '')
+          : (PORTABLE_INTERPRETER_DEFAULTS[task.interpreter.kind] ?? '')
       },
       workingDirectory: local?.workingDirectory ?? null,
       enabled: local?.enabled ?? false
@@ -88,12 +88,11 @@ function buildImportTarget(snapshot, current, mode) {
   const importedScripts = materializeScripts(snapshot.documents.scripts.data, current.scripts)
   const importedFolders = structuredClone(snapshot.documents.scriptFolders?.data ?? [])
   const importedDependencies = structuredClone(snapshot.documents.dependencies?.data ?? [])
-  const importedTasks = materializeTasks(snapshot.documents.tasks.data, current.tasks, current.settings.defaultInterpreters)
+  const importedTasks = materializeTasks(snapshot.documents.tasks.data, current.tasks)
   const importedEnvironments = materializeEnvironments(snapshot.documents.environments.data, current.environments)
   const importedSettings = {
     ...current.settings,
     ...structuredClone(snapshot.documents.settings.data),
-    defaultInterpreters: current.settings.defaultInterpreters,
     defaultWorkingDirectory: current.settings.defaultWorkingDirectory,
     schedulerNoticeAcknowledged: current.settings.schedulerNoticeAcknowledged
   }

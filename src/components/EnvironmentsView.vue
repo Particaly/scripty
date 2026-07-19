@@ -10,7 +10,6 @@ const drawerVisible = ref(false)
 const editingId = ref<string | null>(null)
 const form = ref<EnvironmentInput>(emptyInput())
 const revealedValues = ref<Record<string, string>>({})
-const importPreview = ref<{ previewToken: string; entries: Array<{ name: string; value: string }>; conflicts: string[] } | null>(null)
 const scopeOptions = [{ label: '全局', value: 'global' }, { label: '任务', value: 'task' }]
 
 /** Creates a fresh global environment-variable draft. */
@@ -41,31 +40,6 @@ async function saveVariable() {
   const result = editingId.value ? await api.update(editingId.value, form.value) : await api.create(form.value)
   if (result.ok === false) return emit('feedback', 'error', result.error.message)
   drawerVisible.value = false; await loadData(); emit('feedback', 'success', editingId.value ? '环境变量已更新' : '环境变量已创建')
-}
-
-/** Selects a dotenv file and imports its preview into the global scope after confirmation. */
-async function importDotEnv() {
-  const api = window.scripty?.environments
-  if (!api) return
-  const preview = await api.chooseDotEnvImport()
-  if (preview.ok === false) return emit('feedback', 'error', preview.error.message)
-  if (!preview.data) return
-  importPreview.value = preview.data
-  if (!await props.requestConfirmation({ title: '导入 .env', message: `导入 ${preview.data.entries.length} 个变量？${preview.data.conflicts.length ? ` ${preview.data.conflicts.length} 个同名变量将覆盖。` : ''}`, type: 'warning', confirmText: '导入', cancelText: '取消' })) return
-  const result = await api.importDotEnv(preview.data.previewToken, { scope: 'global', taskId: null, sensitive: false, overwriteExisting: true })
-  if (result.ok === false) return emit('feedback', 'error', result.error.message)
-  await loadData(); emit('feedback', 'success', `已导入 ${result.data.created + result.data.updated} 个变量`)
-}
-
-/** Exports dotenv values and requires a second warning when any selected value is sensitive. */
-async function exportDotEnv() {
-  const api = window.scripty?.environments
-  if (!api) return
-  const containsSensitive = variables.value.some(variable => variable.sensitive)
-  if (containsSensitive && !await props.requestConfirmation({ title: '导出敏感值', message: '导出文件将包含本地明文敏感值，是否继续？', type: 'warning', confirmText: '继续导出', cancelText: '取消' })) return
-  const result = await api.exportDotEnv({ includeSensitiveValues: containsSensitive })
-  if (result.ok === false) return emit('feedback', 'error', result.error.message)
-  if (result.data) emit('feedback', 'success', `已导出 ${result.data.displayName}`)
 }
 
 /** Reveals one sensitive value only after explicit warning confirmation. */
@@ -108,7 +82,7 @@ onMounted(loadData)
 
 <template>
   <section class="environments-view">
-    <ZDrawer v-model:show="drawerVisible" placement="right" width="420" trap-focus>
+    <ZDrawer v-model:show="drawerVisible" placement="right" width="40%" trap-focus>
       <ZDrawerContent :title="editingId ? '编辑环境变量' : '创建环境变量'" closable>
         <form class="task-form" @submit.prevent="saveVariable">
           <label><span>名称</span><ZInput v-model="form.name" placeholder="API_TOKEN" /></label>
@@ -122,9 +96,33 @@ onMounted(loadData)
         <template #footer><div class="drawer-actions"><ZButton @click="drawerVisible=false">取消</ZButton><ZButton type="primary" @click="saveVariable">保存</ZButton></div></template>
       </ZDrawerContent>
     </ZDrawer>
-    <div class="section-heading"><div><h2>环境变量</h2></div><div class="section-heading__actions"><ZButton @click="importDotEnv">导入 .env</ZButton><ZButton :disabled="variables.length===0" @click="exportDotEnv">导出 .env</ZButton><ZButton type="primary" @click="createVariable">创建变量</ZButton></div></div>
+    <div class="section-heading"><div><h2>环境变量</h2></div><div class="section-heading__actions"><ZButton type="primary" @click="createVariable">创建变量</ZButton></div></div>
     <div v-if="variables.length === 0" class="empty-state"><div class="empty-state__mark">E</div><h3>还没有环境变量</h3></div>
-    <ul v-else class="environment-list"><li v-for="variable in variables" :key="variable.id" class="environment-row"><div><strong>{{ variable.name }}</strong><p>{{ revealedValues[variable.id] ?? variable.maskedValue }}</p><span>{{ variable.note || '暂无备注' }}</span></div><div class="environment-tags"><ZTag>{{ variable.scope === 'global' ? '全局' : '任务' }}</ZTag><ZTag v-if="variable.sensitive" type="warning">敏感</ZTag></div><div class="task-row__actions"><ZSwitch :model-value="variable.enabled" :aria-label="`${variable.enabled ? '禁用' : '启用'}变量 ${variable.name}`" @update:model-value="(enabled) => setEnabled(variable, enabled)" /><ZButton v-if="variable.sensitive" type="text" @click="revealVariable(variable)">查看</ZButton><ZButton type="text" @click="copyVariable(variable)">复制</ZButton><ZButton type="text" @click="editVariable(variable)">编辑</ZButton><ZButton type="danger" @click="removeVariable(variable)">删除</ZButton></div></li></ul>
+    <ul v-else class="environment-list">
+      <li v-for="variable in variables" :key="variable.id" class="environment-row">
+        <div class="environment-row__header">
+          <div class="environment-row__title">
+            <strong>{{ variable.name }}</strong>
+            <ZTag size="small">{{ variable.scope === 'global' ? '全局' : '任务' }}</ZTag>
+            <ZTag v-if="variable.sensitive" type="warning" size="small">敏感</ZTag>
+          </div>
+          <div class="environment-row__actions">
+            <ZButton v-if="variable.sensitive" type="text" size="small" @click="revealVariable(variable)">查看</ZButton>
+            <ZButton type="text" size="small" @click="copyVariable(variable)">复制</ZButton>
+            <ZButton type="text" size="small" @click="editVariable(variable)">编辑</ZButton>
+            <ZButton type="danger" size="small" @click="removeVariable(variable)">删除</ZButton>
+          </div>
+        </div>
+        <p class="environment-row__value">{{ revealedValues[variable.id] ?? variable.maskedValue }}</p>
+        <div class="environment-row__footer">
+          <span class="environment-row__note">{{ variable.note || '暂无备注' }}</span>
+          <div class="environment-row__toggle">
+            <span>{{ variable.enabled ? '已启用' : '已禁用' }}</span>
+            <ZSwitch :model-value="variable.enabled" size="small" :aria-label="`${variable.enabled ? '禁用' : '启用'}变量 ${variable.name}`" @update:model-value="(enabled) => setEnabled(variable, enabled)" />
+          </div>
+        </div>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -151,29 +149,76 @@ onMounted(loadData)
 }
 
 .environment-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto auto;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
   background: var(--card-bg);
+  width: 100%;
+  overflow: hidden;
 }
 
-.environment-row span {
+.environment-row__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.environment-row__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.environment-row__title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-row__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.environment-row__value {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.environment-row__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.environment-row__toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.environment-row__note,
+.environment-row__toggle > span {
   color: var(--text-secondary);
   font-size: 12px;
 }
 
-.environment-tags {
-  display: flex;
-  gap: 6px;
-}
-
-.environment-row p {
-  margin: 5px 0 0;
-  color: var(--text-secondary);
-  font-family: "SFMono-Regular", Consolas, monospace;
+.environment-row__note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

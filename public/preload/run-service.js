@@ -15,6 +15,13 @@ const FINALIZATION_WRITE_ATTEMPTS = 2
 const SCHEDULED_TRIGGER_TOKEN = Symbol('scheduled-trigger')
 const defaultInterpreterResolver = createInterpreterResolver()
 
+/** Formats the current local time as `yyyy-mm-dd hh:mm:ss` for log-line prefixes. */
+function logTimestamp(date = new Date()) {
+  const pad = value => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 /** Sends one process-tree signal without a shell, using forced taskkill semantics on Windows. */
 function signalProcessTree(child, signal, platform = process.platform, spawnProcess = spawn) {
   return new Promise((resolve, reject) => {
@@ -121,7 +128,7 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
     try {
       const content = active.maskers[type].push(chunk.toString('utf8'))
       if (!content) return
-      logFileRepository.append(runId, `[${type}] ${content}`)
+      logFileRepository.append(runId, `${logTimestamp()} [${type}] ${content}`)
       active.sequence += 1
       emitEvent({ type, runId, sequence: active.sequence, chunk: content })
     } catch {
@@ -135,7 +142,7 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
       try {
         const remainder = active.maskers[type].flush()
         if (!remainder) continue
-        logFileRepository.append(active.record.id, `[${type}] ${remainder}`)
+        logFileRepository.append(active.record.id, `${logTimestamp()} [${type}] ${remainder}`)
         active.sequence += 1
         emitEvent({ type, runId: active.record.id, sequence: active.sequence, chunk: remainder })
       } catch {
@@ -303,10 +310,19 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
      * The renderer cannot provide an executable, source path, command string, shell option, or Cron trigger.
      */
     start(taskId, trigger = 'manual', scheduledToken) {
-      return invoke(() => new Promise((resolve, reject) => {
+      return invoke(async () => {
         const publicTrigger = ['manual', 'retry'].includes(trigger)
         const scheduledTrigger = trigger === 'cron' && scheduledToken === SCHEDULED_TRIGGER_TOKEN
-        if (!publicTrigger && !scheduledTrigger) return reject(new RepositoryError('VALIDATION_ERROR', '运行触发来源无效'))
+        if (!publicTrigger && !scheduledTrigger) throw new RepositoryError('VALIDATION_ERROR', '运行触发来源无效')
+        // Best-effort: refresh the interpreter cache from the user's login-shell PATH before launch so
+        // interpreters installed via version managers resolve even when they were absent at startup.
+        const pending = metadataRepository.read('tasks').find(item => item.id === taskId)
+        if (pending?.interpreter?.kind && typeof pending.interpreter.executable === 'string') {
+          try {
+            await interpreterResolver.resolveAsync(pending.interpreter.kind, pending.interpreter.executable)
+          } catch {}
+        }
+        return new Promise((resolve, reject) => {
         const { task, script, resolvedExecutable } = resolveRunnableTask(taskId)
         reserveTaskSlot(task)
         const runId = randomUUID()
@@ -455,7 +471,8 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
         child.once('error', handleChildError)
         child.once('exit', handleChildExit)
         child.once('close', handleChildClose)
-      }))
+        })
+      })
     },
 
     /** Requests bounded process-tree termination and reports terminal commit failures through the result envelope. */

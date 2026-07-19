@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { fileIconUrl } from '../composables/fileIcons'
 import type { DependencyKind } from '../types/domain'
 import type { DependencySummary } from '../types/api'
 
@@ -141,13 +142,24 @@ onMounted(loadDependencies)
       </div>
       <div class="section-heading__actions">
         <ZButton type="default" :disabled="installing" @click="openCreateDialog">新增依赖</ZButton>
+        <div class="dependency-kind-switch" role="group" aria-label="依赖类型">
+          <button
+            v-for="kind in (['node', 'python'] as DependencyKind[])"
+            :key="kind"
+            type="button"
+            class="dependency-kind-switch__button"
+            :class="{ 'dependency-kind-switch__button--active': activeKind === kind }"
+            :disabled="installing"
+            :aria-label="`${kindLabels[kind]} 依赖`"
+            :aria-pressed="activeKind === kind"
+            :title="kindLabels[kind]"
+            @click="activeKind = kind"
+          >
+            <img :src="fileIconUrl(kind === 'node' ? 'package.json' : 'dependency.py')" alt="" aria-hidden="true" />
+          </button>
+        </div>
+        <ZTag v-if="installing" type="info" size="small">安装中...</ZTag>
       </div>
-    </div>
-
-    <div class="view-toolbar dependency-kind-switch" role="group" aria-label="依赖类型">
-      <ZButton :type="activeKind === 'node' ? 'primary' : 'default'" :disabled="installing" size="small" @click="activeKind = 'node'">Node.js</ZButton>
-      <ZButton :type="activeKind === 'python' ? 'primary' : 'default'" :disabled="installing" size="small" @click="activeKind = 'python'">Python</ZButton>
-      <ZTag v-if="installing" type="info" size="small">安装中...</ZTag>
     </div>
 
     <div class="view-body">
@@ -185,10 +197,53 @@ onMounted(loadDependencies)
 }
 
 .dependency-kind-switch {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding-top: 0;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--card-bg);
+}
+
+.dependency-kind-switch__button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.dependency-kind-switch__button:hover:not(:disabled) {
+  background: var(--hover-bg);
+}
+
+.dependency-kind-switch__button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-light-bg);
+}
+
+.dependency-kind-switch__button--active {
+  background: var(--primary-light-bg);
+}
+
+.dependency-kind-switch__button--active:hover:not(:disabled) {
+  background: var(--primary-light-bg);
+}
+
+.dependency-kind-switch__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.dependency-kind-switch__button img {
+  width: 18px;
+  height: 18px;
 }
 
 .dependency-list {

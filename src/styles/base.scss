@@ -32,7 +32,7 @@ textarea {
 // their border highlight instead.
 :where(button, [tabindex]):focus-visible {
   outline: 3px solid color-mix(in srgb, var(--primary-color) 55%, transparent) !important;
-  outline-offset: 3px !important;
+  outline-offset: 0px !important;
 }
 
 input:focus-visible,

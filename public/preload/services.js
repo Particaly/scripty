@@ -55,6 +55,16 @@ const interpreterResolver = createInterpreterResolver({
   environment: process.env,
   homeDirectory: os.homedir()
 })
+
+// Warm the resolver cache from the user's login-shell PATH so task readiness reflects interpreters
+// installed via version managers (mise, nvm, pyenv, …) that are absent from the plugin's inherited PATH.
+// Built-in command names are the only defaults; failures leave synchronous discovery as the fallback.
+;(function warmInterpreterCache() {
+  const BUILT_IN_INTERPRETERS = { javascript: 'node', python: 'python', powershell: 'powershell', shell: 'sh' }
+  for (const [kind, configured] of Object.entries(BUILT_IN_INTERPRETERS)) {
+    Promise.resolve(interpreterResolver.resolveAsync(kind, configured)).catch(() => {})
+  }
+})()
 const dependencyService = createDependencyService(dataPaths.root, metadataRepository, interpreterResolver)
 dependencyService.initialize()
 const runService = createRunService(metadataRepository, managedScriptRepository, logFileRepository, undefined, process.platform, undefined, interpreterResolver, dependencyService)
@@ -96,11 +106,11 @@ window.scripty = {
     ztools: window.ztools
   }),
   dependencies: dependencyService.api,
-  environments: createEnvironmentsApi(metadataRepository, window.ztools),
+  environments: createEnvironmentsApi(metadataRepository),
   history: createHistoryApi(metadataRepository, logFileRepository, runService.api),
   runs: runService.api,
-  scripts: createScriptsApi(metadataRepository, managedScriptRepository, window.ztools),
-  settings: createSettingsApi(metadataRepository, window.ztools),
+  scripts: createScriptsApi(metadataRepository, managedScriptRepository),
+  settings: createSettingsApi(metadataRepository),
   tasks: tasksApi
 }
 

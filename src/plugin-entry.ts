@@ -4,7 +4,7 @@ export const TASK_LIBRARY_FEATURE = 'scripty'
 export const RUN_TASK_FEATURE = 'scripty-run-task'
 export const RUNNING_TASKS_FEATURE = 'scripty-running'
 
-export type PluginSection = 'tasks' | 'running'
+export type PluginSection = 'tasks' | 'history'
 
 export interface PluginTaskCandidate {
   title?: string
@@ -13,7 +13,7 @@ export interface PluginTaskCandidate {
 
 /** Maps every host feature to an existing application section and safely defaults unknown entries to the task library. */
 export function resolvePluginSection(code: unknown): PluginSection {
-  return code === RUNNING_TASKS_FEATURE ? 'running' : 'tasks'
+  return code === RUNNING_TASKS_FEATURE ? 'history' : 'tasks'
 }
 
 /** Accepts only host text payloads as search input so files, objects, and other payload types cannot become execution data. */

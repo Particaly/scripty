@@ -22,12 +22,6 @@ const enabledFilter = ref<string>('all')
 const readinessFilter = ref<string>('all')
 const tasks = ref<TaskSummary[]>([])
 const scripts = ref<ScriptSummary[]>([])
-const defaultInterpreters = ref<Record<ScriptLanguage, string | null>>({
-  javascript: null,
-  python: null,
-  powershell: null,
-  shell: null
-})
 const loading = ref(false)
 const saving = ref(false)
 const changingTaskIds = ref(new Set<string>())
@@ -90,8 +84,8 @@ const readinessLabels: Record<TaskSummary['readiness'], string> = {
   invalid_working_directory: '工作目录无效'
 }
 const readinessGuidance: Record<Exclude<TaskSummary['readiness'], 'ready'>, { message: string; action: string }> = {
-  script_missing: { message: '托管源码文件不存在，请重新导入脚本或为任务选择其他脚本。', action: '选择脚本' },
-  interpreter_unavailable: { message: '解释器命令为空或本地文件不可用，请重新配置。', action: '配置解释器' },
+  script_missing: { message: '托管源码文件不存在，请重新创建脚本或为任务选择其他脚本。', action: '选择脚本' },
+  interpreter_unavailable: { message: '未找到该语言的解释器，请确认已安装并可从终端调用。', action: '重新检测' },
   invalid_cron: { message: 'Cron 不是有效的五段表达式，请修改计划。', action: '修改 Cron' },
   invalid_working_directory: { message: '工作目录不存在或不是目录，请修改或留空。', action: '修改目录' }
 }
@@ -258,22 +252,19 @@ function createEmptyDraft(): TaskDraft {
   }
 }
 
-/** Loads persisted tasks and script choices; browser-only development falls back to empty data. */
+/** Refreshes task and script summaries so interpreter readiness is recalculated by preload. */
 async function loadData() {
   if (!window.scripty?.tasks) return
   loading.value = true
-  const [taskResult, scriptResult, settingsResult] = await Promise.all([
+  const [taskResult, scriptResult] = await Promise.all([
     window.scripty.tasks.list(),
-    window.scripty.scripts?.list(),
-    window.scripty.settings?.get()
+    window.scripty.scripts?.list()
   ])
   loading.value = false
   if (taskResult.ok === true) tasks.value = taskResult.data
   else emit('feedback', 'error', taskResult.error.message)
   if (scriptResult?.ok === true) scripts.value = scriptResult.data
   else if (scriptResult?.ok === false) emit('feedback', 'error', scriptResult.error.message)
-  if (settingsResult?.ok === true) defaultInterpreters.value = settingsResult.data.defaultInterpreters
-  else if (settingsResult?.ok === false) emit('feedback', 'error', settingsResult.error.message)
 }
 
 /** Opens a blank creation form and preselects the first managed script when one exists. */
@@ -317,7 +308,7 @@ function selectScript(scriptId: string | number | Array<string | number> | null)
   form.value.scriptId = scriptId
   if (script) {
     form.value.interpreter.kind = script.language
-    form.value.interpreter.executable = defaultInterpreters.value[script.language] ?? defaultExecutables[script.language]
+    form.value.interpreter.executable = defaultExecutables[script.language]
   }
 }
 
@@ -426,12 +417,15 @@ async function runTask(task: TaskSummary) {
   emit('feedback', 'success', `已启动“${task.name}”`)
 }
 
-/** Opens the task editor at the field that can resolve the current readiness error. */
-function resolveTaskIssue(task: TaskSummary) {
+/** Rechecks auto-discovered interpreter readiness; other issues open the relevant task editor field. */
+async function resolveTaskIssue(task: TaskSummary) {
+  if (task.readiness === 'interpreter_unavailable') {
+    await loadData()
+    return
+  }
   openEditDrawer(task)
   const selectorByReadiness: Partial<Record<TaskSummary['readiness'], string>> = {
     script_missing: '[role="combobox"]',
-    interpreter_unavailable: 'input[placeholder="node / python / powershell / sh"]',
     invalid_cron: '[data-schedule-custom] input, [data-schedule-group] input',
     invalid_working_directory: 'input[placeholder="留空时使用托管脚本目录"]'
   }
@@ -473,10 +467,6 @@ watch(
               :message="fieldErrors.scriptId"
               @update:model-value="selectScript"
             />
-          </label>
-          <label>
-            <span>解释器命令或路径</span>
-            <ZInput v-model="form.interpreter.executable" placeholder="node / python / powershell / sh" :status="fieldErrors['interpreter.executable'] ? 'error' : undefined" :message="fieldErrors['interpreter.executable']" />
           </label>
           <label>
             <span>参数（每行一项，空格不会被拆分）</span>
@@ -574,7 +564,7 @@ watch(
     </div>
 
     <div class="view-body">
-    <p v-if="scripts.length === 0 && !loading" class="task-message" role="status">请先创建或导入托管脚本，再创建任务。</p>
+    <p v-if="scripts.length === 0 && !loading" class="task-message" role="status">请先创建托管脚本，再创建任务。</p>
     <p v-else-if="loading" class="task-message" role="status">正在加载任务…</p>
     <div v-else-if="tasks.length === 0" class="empty-state" aria-live="polite">
       <div class="empty-state__mark" aria-hidden="true">T</div>

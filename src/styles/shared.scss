@@ -5,9 +5,6 @@
 .view-body {
   flex: 1 1 auto;
   min-height: 0;
-  /* top/bottom padding keeps the focus ring of the first/last focusable child
-     visible instead of clipped by `overflow-y: auto`. */
-  padding-top: 8px;
   padding-bottom: 36px;
   overflow-y: auto;
 }
@@ -43,7 +40,6 @@
 .view-toolbar {
   flex: 0 0 auto;
   padding-top: 24px;
-  padding-bottom: 20px;
 }
 
 .view-toolbar .section-heading {

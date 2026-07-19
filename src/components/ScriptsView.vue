@@ -4,7 +4,7 @@ import { ZButton } from 'ztools-ui'
 import ZTree, { type TreeOption, type RenderFn } from './ZTree.vue'
 import { createEditor, type CodeMirrorHandle } from '../composables/useCodeMirror'
 import { fileIconUrl, folderIconUrl } from '../composables/fileIcons'
-import type { ScriptFolderSummary, ScriptSummary, SelectedScriptFile } from '../types/api'
+import type { ScriptFolderSummary, ScriptSummary } from '../types/api'
 import type { ScriptLanguage } from '../types/domain'
 
 const props = defineProps<{
@@ -16,33 +16,18 @@ const emit = defineEmits<{
 
 const scripts = ref<ScriptSummary[]>([])
 const folders = ref<ScriptFolderSummary[]>([])
-const selection = ref<SelectedScriptFile | null>(null)
-const importVisible = ref(false)
 const editorVisible = ref(false)
 const pathDialogVisible = ref(false)
 const pathOperation = ref<'create-folder' | 'move-folder' | 'move-script'>('create-folder')
 const pathTargetId = ref<string | null>(null)
 const pathValue = ref('')
 const editingScriptId = ref<string | null>(null)
-const importing = ref(false)
 const saving = ref(false)
 const content = ref('')
 /** Editor-only directory prefix (no trailing slash) inferred from where the user created/edited the script. */
 const editorDir = ref('')
 /** Editor-only full filename (name + extension) the user sees and edits. */
 const editorFileName = ref('')
-/** relativePath is now only consumed by the import dialog; the editor uses editorDir + editorFileName. */
-const relativePath = ref('')
-/** Name, note and language are now only consumed by the import dialog; the editor derives them from relativePath. */
-const name = ref('')
-const note = ref('')
-const language = ref<ScriptLanguage>('javascript')
-const languageOptions = [
-  { label: 'JavaScript', value: 'javascript' },
-  { label: 'Python', value: 'python' },
-  { label: 'PowerShell', value: 'powershell' },
-  { label: 'Shell', value: 'shell' }
-]
 
 /**
  * Maps a recognized file extension to its Scripty execution language. This only
@@ -613,36 +598,6 @@ async function saveSource(closeAfter = true) {
   emit('feedback', 'success', editingScriptId.value ? '脚本源码已更新' : '脚本已创建')
 }
 
-/** Opens the host picker and hydrates an import preview from its short-lived token. */
-async function chooseImportFile() {
-  const result = await window.scripty.scripts.chooseImportFile()
-  if (result.ok === false) return emit('feedback', 'error', result.error.message)
-  if (!result.data) return
-  selection.value = result.data
-  name.value = result.data.displayName.replace(/\.[^.]+$/, '')
-  relativePath.value = result.data.displayName
-  language.value = result.data.detectedLanguage ?? 'javascript'
-  note.value = ''
-  importVisible.value = true
-}
-
-/** Consumes one import token and refreshes managed metadata after the independent copy commits. */
-async function importScript() {
-  if (!selection.value || importing.value) return
-  importing.value = true
-  const result = await window.scripty.scripts.importSelected(selection.value.selectionToken, {
-    name: name.value, relativePath: relativePath.value, language: language.value, note: note.value
-  })
-  importing.value = false
-  if (result.ok === false) return emit('feedback', 'error', result.error.message)
-  importVisible.value = false
-  selection.value = null
-  await loadScripts()
-  // 展开导入副本所在目录，让用户立刻看到它。
-  expandFolder(relativePath.value.split('/').slice(0, -1).join('/'))
-  emit('feedback', 'success', `已导入“${result.data.name}”的托管副本`)
-}
-
 /** Opens the constrained relative-path dialog for a folder or script operation. */
 function openPathDialog(operation: typeof pathOperation.value, target?: ScriptFolderSummary | ScriptSummary) {
   pathOperation.value = operation
@@ -692,11 +647,6 @@ async function removeFolder(folder: ScriptFolderSummary) {
   emit('feedback', 'success', '目录已删除')
 }
 
-/** Formats byte counts for the import preview without revealing source paths. */
-function formatSize(size: number) {
-  return size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KiB`
-}
-
 onMounted(loadScripts)
 </script>
 
@@ -718,18 +668,6 @@ onMounted(loadScripts)
       </ZDrawerContent>
     </ZDrawer>
 
-    <ZModal v-model:show="importVisible" :mask-closable="false" trap-focus auto-focus>
-      <div v-if="selection" class="import-form">
-        <h3>导入本地脚本</h3>
-        <div class="import-preview"><strong>{{ selection.displayName }}</strong><span>{{ formatSize(selection.size) }} · 将复制到托管目录</span></div>
-        <label><span>脚本名称</span><ZInput v-model="name" /></label>
-        <label><span>相对文件路径</span><ZInput v-model="relativePath" placeholder="例如：imports/tool.js" /></label>
-        <label><span>脚本语言</span><ZSelect v-model="language" :options="languageOptions" /></label>
-        <label><span>备注</span><ZInput v-model="note" type="textarea" maxlength="500" /></label>
-        <div class="drawer-actions"><ZButton type="default" @click="importVisible = false">取消</ZButton><ZButton type="primary" :loading="importing" :disabled="!name.trim() || !relativePath.trim()" @click="importScript">复制到 Scripty</ZButton></div>
-      </div>
-    </ZModal>
-
     <ZModal v-model:show="pathDialogVisible" :mask-closable="false" trap-focus auto-focus>
       <form class="path-form" @submit.prevent="applyPathOperation">
         <h3>{{ pathOperation === 'create-folder' ? '新建目录' : '移动或重命名' }}</h3>
@@ -742,14 +680,13 @@ onMounted(loadScripts)
     <div class="section-heading">
       <div><h2 id="scripts-heading">托管脚本</h2></div>
       <div class="section-heading__actions">
-        <ZButton type="default" @click="openCreateEditor(selectedTargetDir)">新建脚本</ZButton>
-        <ZButton type="primary" @click="chooseImportFile">导入本地脚本</ZButton>
+        <ZButton type="primary" @click="openCreateEditor(selectedTargetDir)">新建脚本</ZButton>
       </div>
     </div>
 
     <div class="view-body" :class="{ 'view-body--tree': scripts.length + folders.length > 0 }">
       <div v-if="scripts.length === 0 && folders.length === 0" class="empty-state">
-        <div class="empty-state__mark" aria-hidden="true">S</div><h3>还没有脚本</h3><p>创建目录、脚本，或导入本地文件的独立托管副本。</p>
+        <div class="empty-state__mark" aria-hidden="true">S</div><h3>还没有脚本</h3><p>创建目录和脚本，源码将保存在 Scripty 托管目录中。</p>
       </div>
       <div
         v-else
@@ -873,34 +810,5 @@ onMounted(loadScripts)
   background: var(--input-bg);
   color: var(--text-color);
   font: inherit;
-}
-
-.import-form {
-  display: grid;
-  width: min(440px, calc(100vw - 80px));
-  gap: 18px;
-  padding: 22px;
-}
-
-.import-form h3 {
-  margin: 0;
-}
-
-.import-form label,
-.import-preview {
-  display: grid;
-  gap: 8px;
-}
-
-.import-form label > span {
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-/* .import-preview span is the live half of the original combined rule. */
-.import-preview span {
-  margin: 6px 0 0;
-  color: var(--text-secondary);
-  font-size: 13px;
 }
 </style>

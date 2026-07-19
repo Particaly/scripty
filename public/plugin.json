@@ -134,7 +134,7 @@
       }
     },
     "create_task": {
-      "description": "为已有脚本创建一个任务。若不提供 interpreter.executable，会回退到设置中该语言的默认解释器。可选配置 Cron、超时、工作目录、参数和并发策略。",
+      "description": "为已有脚本创建一个任务。若不提供 interpreter.executable，将按脚本语言自动查找对应解释器。可选配置 Cron、超时、工作目录、参数和并发策略。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -143,7 +143,7 @@
           "note": { "type": "string", "description": "可选备注" },
           "interpreter": {
             "type": "object",
-            "description": "解释器配置。省略 executable 时使用设置中该语言的默认解释器",
+            "description": "解释器配置。省略 executable 时按脚本语言自动查找",
             "properties": {
               "kind": {
                 "type": "string",

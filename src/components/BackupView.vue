@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { BackupImportMode, BackupImportSummary, ExportPreview, ImportChangePreview, ImportPackagePreview, SaveSummary, SensitiveExportConfirmation } from '../types/api'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import type { BackupImportMode, BackupImportSummary, ExportPreview, ImportChangePreview, ImportPackagePreview, SensitiveExportConfirmation } from '../types/api'
 import type { ExportOptions } from '../types/domain'
 
 const emit = defineEmits<{
@@ -22,8 +22,9 @@ const options = ref<ExportOptions>({
   includeSensitiveValues: false
 })
 const preview = ref<ExportPreview | null>(null)
+const previewModalVisible = ref(false)
+const includeEnvironmentsDraft = ref(false)
 const previewConfirmation = ref<SensitiveExportConfirmation | undefined>()
-const exportResult = ref<SaveSummary | null>(null)
 const operation = ref<'preview' | 'export' | 'import-validation' | 'import' | null>(null)
 const expired = ref(false)
 const importPreview = ref<ImportPackagePreview | null>(null)
@@ -34,11 +35,14 @@ const previewAvailable = computed(() => typeof window.scripty?.backups?.previewE
 let requestGeneration = 0
 let expiryTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Formats a saved archive size for the persistent result without exposing its absolute path. */
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+/** Formats an ISO timestamp as local `yyyy-mm-dd hh:mm:ss`, leaving unparseable values untouched. */
+function formatDateTime(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (input: number) => String(input).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 /** Formats one import mode's total counters into concise preview text. */
@@ -54,68 +58,87 @@ function invalidateImportPreview() {
   importValidationTimer.value = null
 }
 
-/** Clears preview credentials and invalidates in-flight responses tied to older options or consumed tokens. */
-function invalidatePreview(markExpired = false) {
+/** Clears preview credentials, optionally keeps its dialog open, and invalidates in-flight responses tied to older options or consumed tokens. */
+function invalidatePreview(markExpired = false, closeModal = true) {
   requestGeneration += 1
   preview.value = null
+  if (closeModal) previewModalVisible.value = false
   previewConfirmation.value = undefined
   expired.value = markExpired
   if (expiryTimer !== null) clearTimeout(expiryTimer)
   expiryTimer = null
 }
 
-/** Applies parent-child option constraints before the options watcher invalidates previous state. */
-function updateEnvironmentInclusion(included: boolean) {
-  options.value.includeEnvironments = included
-  if (!included) {
-    options.value.includeEnvironmentValues = false
-    options.value.includeSensitiveValues = false
-  }
-}
-
-/** Clears sensitive inclusion whenever ordinary environment values are disabled. */
-function updateValueInclusion(included: boolean) {
-  options.value.includeEnvironmentValues = included
-  if (!included) options.value.includeSensitiveValues = false
-}
-
-/** Requests the one explicit plaintext-risk acknowledgement needed to build and later save a sensitive snapshot. */
-async function confirmSensitiveExport() {
-  const accepted = await props.requestConfirmation({
-    title: '导出敏感值',
-    message: '预览将读取并在 preload 内短暂缓存本地明文敏感值，最终 ZIP 中也会包含这些值。任何能够访问该文件的人都可能读取它们，是否继续？',
-    type: 'warning',
-    confirmText: '确认并生成预览',
-    cancelText: '取消'
-  })
-  return accepted ? { acknowledgedPlaintextRisk: true } as const : undefined
-}
-
-/** Builds an immutable repository-backed preview after obtaining any required sensitive-value acknowledgement. */
-async function generatePreview() {
+/** Rebuilds the immutable preview without a secondary prompt; checking the option is the explicit plaintext-risk acknowledgement. */
+async function updatePreviewEnvironmentInclusion(included: boolean) {
   const api = window.scripty?.backups?.previewExport
-  if (!api || operation.value) return
-  const input = { ...options.value }
-  const confirmation = input.includeSensitiveValues ? await confirmSensitiveExport() : undefined
-  if (input.includeSensitiveValues && !confirmation) return
-  invalidatePreview()
-  exportResult.value = null
+  if (!api || !preview.value || operation.value) return
+  const previousValue = includeEnvironmentsDraft.value
+  const confirmation = included ? { acknowledgedPlaintextRisk: true } as const : undefined
+  const input: ExportOptions = {
+    ...options.value,
+    includeEnvironments: included,
+    includeEnvironmentValues: included,
+    includeSensitiveValues: included
+  }
+  includeEnvironmentsDraft.value = included
+  requestGeneration += 1
   const generation = requestGeneration
+  expired.value = false
+  if (expiryTimer !== null) clearTimeout(expiryTimer)
+  expiryTimer = null
   operation.value = 'preview'
   const result = await api(input, confirmation)
   operation.value = null
   if (generation !== requestGeneration) return
   if (result.ok === false) {
+    includeEnvironmentsDraft.value = previousValue
+    invalidatePreview()
     emit('feedback', 'error', result.error.message)
     return
   }
+  options.value = input
   preview.value = result.data
   previewConfirmation.value = confirmation
   const expiryDelay = Math.max(0, Date.parse(result.data.expiresAt) - Date.now())
   expiryTimer = setTimeout(() => invalidatePreview(true), expiryDelay)
 }
 
-/** Consumes the current preview once and renders an authoritative save result from preload. */
+/** Builds the default scripts-and-tasks snapshot and opens its modal with environment export unchecked. */
+async function generatePreview() {
+  const api = window.scripty?.backups?.previewExport
+  if (!api || operation.value) return
+  const input: ExportOptions = {
+    includeEnvironments: false,
+    includeEnvironmentValues: false,
+    includeSensitiveValues: false
+  }
+  invalidatePreview()
+  const generation = requestGeneration
+  operation.value = 'preview'
+  const result = await api(input)
+  operation.value = null
+  if (generation !== requestGeneration) return
+  if (result.ok === false) {
+    emit('feedback', 'error', result.error.message)
+    return
+  }
+  options.value = input
+  preview.value = result.data
+  includeEnvironmentsDraft.value = result.data.manifest.options.includeEnvironments
+  previewConfirmation.value = undefined
+  previewModalVisible.value = true
+  const expiryDelay = Math.max(0, Date.parse(result.data.expiresAt) - Date.now())
+  expiryTimer = setTimeout(() => invalidatePreview(true), expiryDelay)
+}
+
+/** Exports the immutable snapshot that already reflects the modal's selected scope. */
+async function confirmExportBackup() {
+  if (operation.value) return
+  await exportBackup()
+}
+
+/** Consumes the current preview once, closes the dialog, and reports the save result through feedback. */
 async function exportBackup() {
   const api = window.scripty?.backups?.export
   const currentPreview = preview.value
@@ -129,7 +152,6 @@ async function exportBackup() {
     return
   }
   if (!result.data) return
-  exportResult.value = result.data
   const warning = result.data.containsSensitiveValues ? '；包内包含本地明文敏感信息，请妥善保管' : ''
   emit('feedback', 'success', `已导出 ${result.data.displayName}${warning}`)
 }
@@ -182,10 +204,6 @@ async function applyImportBackup() {
   emit('feedback', 'success', importMode.value === 'merge' ? '合并导入完成' : '覆盖恢复完成')
 }
 
-watch(options, () => {
-  invalidatePreview()
-  exportResult.value = null
-}, { deep: true })
 onBeforeUnmount(() => {
   invalidatePreview()
   invalidateImportPreview()
@@ -194,87 +212,52 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="backup-view" aria-labelledby="backup-heading">
+    <ZModal v-model:show="previewModalVisible" :mask-closable="false" trap-focus auto-focus>
+      <article v-if="preview" class="backup-preview backup-preview--modal" aria-labelledby="backup-preview-heading" aria-live="polite">
+        <div class="backup-preview__heading">
+          <div><h3 id="backup-preview-heading">导出备份</h3></div>
+        </div>
+        <dl class="backup-summary">
+          <div><dt>脚本</dt><dd>{{ preview.manifest.entities.scripts }}</dd></div>
+          <div><dt>任务</dt><dd>{{ preview.manifest.entities.tasks }}</dd></div>
+          <div><dt>环境变量</dt><dd>{{ preview.manifest.entities.environments }}</dd></div>
+        </dl>
+        <ZCheckbox
+          class="backup-preview__environment-option"
+          :model-value="includeEnvironmentsDraft"
+          :disabled="operation !== null"
+          @update:model-value="updatePreviewEnvironmentInclusion"
+        >
+          导出环境变量
+        </ZCheckbox>
+        <div class="backup-preview__actions">
+          <ZButton type="default" :disabled="operation !== null" @click="previewModalVisible = false">取消</ZButton>
+          <ZButton
+            type="primary"
+            :loading="operation === 'preview' || operation === 'export'"
+            :disabled="operation !== null"
+            @click="confirmExportBackup"
+          >
+            确认导出
+          </ZButton>
+        </div>
+      </article>
+    </ZModal>
+
     <div class="section-heading">
       <div>
         <h2 id="backup-heading">备份与迁移</h2>
       </div>
       <ZButton type="primary" :loading="operation === 'preview'" :disabled="!previewAvailable || operation !== null" @click="generatePreview">
-        生成导出预览
+        导出备份
       </ZButton>
     </div>
 
     <p v-if="!previewAvailable" class="backup-capability" aria-live="polite">
-      当前运行环境尚未提供备份预览能力。
+      当前运行环境尚未提供备份导出能力。
     </p>
 
-    <fieldset class="backup-options" :disabled="!previewAvailable || operation !== null">
-      <legend>导出范围</legend>
-      <ZCheckbox
-        :model-value="options.includeEnvironments"
-        @update:model-value="updateEnvironmentInclusion"
-      >
-        包含环境变量
-      </ZCheckbox>
-      <div class="backup-options__nested">
-        <ZCheckbox
-          :model-value="options.includeEnvironmentValues"
-          :disabled="!options.includeEnvironments"
-          @update:model-value="updateValueInclusion"
-        >
-          包含环境变量值
-        </ZCheckbox>
-        <ZCheckbox
-          v-model="options.includeSensitiveValues"
-          :disabled="!options.includeEnvironments || !options.includeEnvironmentValues"
-        >
-          包含敏感值
-        </ZCheckbox>
-      </div>
-    </fieldset>
-
-    <p v-if="options.includeSensitiveValues" class="backup-risk" role="status">
-      已选择敏感值；生成预览前会要求确认明文风险，确认前不会读取或缓存敏感值。
-    </p>
-
-    <p v-if="expired" class="backup-capability" aria-live="polite">预览已过期，请重新生成。</p>
-
-    <article v-if="preview" class="backup-preview" aria-live="polite">
-      <div class="backup-preview__heading">
-        <div><h3>导出预览</h3><p>预览已生成；保存操作只会写入系统对话框中选择的位置。</p></div>
-        <ZTag :type="preview.manifest.options.includeSensitiveValues ? 'warning' : 'info'">
-          格式 {{ preview.manifest.formatVersion }}
-        </ZTag>
-      </div>
-      <dl class="backup-summary">
-        <div><dt>生成时间</dt><dd>{{ preview.manifest.exportedAt }}</dd></div>
-        <div><dt>脚本</dt><dd>{{ preview.manifest.entities.scripts }}</dd></div>
-        <div><dt>任务</dt><dd>{{ preview.manifest.entities.tasks }}</dd></div>
-        <div><dt>环境变量</dt><dd>{{ preview.manifest.entities.environments }}</dd></div>
-        <div><dt>包含变量值</dt><dd>{{ preview.manifest.options.includeEnvironmentValues ? '是' : '否' }}</dd></div>
-        <div><dt>包含敏感值</dt><dd>{{ preview.manifest.options.includeSensitiveValues ? '是' : '否' }}</dd></div>
-      </dl>
-      <ul class="backup-warnings">
-        <li v-for="warning in preview.warnings" :key="warning">{{ warning }}</li>
-      </ul>
-      <div class="backup-preview__actions">
-        <ZButton type="primary" :loading="operation === 'export'" :disabled="operation !== null" @click="exportBackup">
-          导出备份
-        </ZButton>
-      </div>
-    </article>
-
-    <article v-if="exportResult" class="backup-result" aria-live="polite">
-      <div class="backup-preview__heading">
-        <div><h3>导出完成</h3><p>{{ exportResult.displayName }}</p></div>
-        <ZTag :type="exportResult.containsSensitiveValues ? 'warning' : 'success'">
-          {{ formatBytes(exportResult.size) }}
-        </ZTag>
-      </div>
-      <p v-if="exportResult.containsSensitiveValues" class="backup-risk backup-result__risk" role="alert">
-        此备份包包含本地明文敏感信息。任何能够访问该文件的人都可能读取这些值，请妥善保管并在不再需要时安全删除。
-      </p>
-      <p v-else class="backup-result__safe">备份包未包含标记为敏感的环境变量值。</p>
-    </article>
+    <p v-if="expired" class="backup-capability" aria-live="polite">备份信息已过期，请重新导出。</p>
 
     <section class="backup-import" aria-labelledby="backup-import-heading">
       <div>
@@ -292,8 +275,7 @@ onBeforeUnmount(() => {
           </ZTag>
         </div>
         <dl class="backup-summary">
-          <div><dt>导出时间</dt><dd>{{ importPreview.package.exportedAt }}</dd></div>
-          <div><dt>应用版本</dt><dd>{{ importPreview.package.appVersion }}</dd></div>
+          <div><dt>导出时间</dt><dd>{{ formatDateTime(importPreview.package.exportedAt) }}</dd></div>
           <div><dt>脚本</dt><dd>{{ importPreview.package.entities.scripts }}</dd></div>
           <div><dt>任务</dt><dd>{{ importPreview.package.entities.tasks }}</dd></div>
           <div><dt>环境变量</dt><dd>{{ importPreview.package.entities.environments }}</dd></div>
@@ -347,33 +329,38 @@ onBeforeUnmount(() => {
   background: var(--warning-light-bg);
 }
 
-.backup-options {
-  display: grid;
-  gap: 14px;
-  margin: 0 0 18px;
-  padding: 18px;
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  background: var(--card-bg);
-}
-
-.backup-options legend {
-  padding: 0 6px;
-  font-weight: 600;
-}
-
-.backup-options__nested {
-  display: grid;
-  gap: 12px;
-  padding-left: 26px;
-}
-
 .backup-preview,
 .backup-result {
   padding: 20px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
   background: var(--card-bg);
+}
+
+.backup-preview--modal {
+  width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.backup-preview--modal .backup-summary {
+  grid-template-columns: minmax(0, 1fr);
+  margin-bottom: 0;
+}
+
+.backup-preview--modal .backup-summary div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.backup-preview--modal .backup-summary dd {
+  margin: 0;
+}
+
+.backup-preview__environment-option {
+  margin-top: 18px;
 }
 
 .backup-result {
@@ -392,21 +379,8 @@ onBeforeUnmount(() => {
 .backup-preview__actions {
   display: flex;
   justify-content: flex-end;
+  gap: 12px;
   margin-top: 18px;
-}
-
-.backup-result__risk {
-  margin: 18px 0 0;
-  color: var(--text-color);
-}
-
-.backup-result__safe {
-  margin: 18px 0 0;
-  color: var(--text-secondary);
-}
-
-.backup-result :deep(.backup-preview__heading p) {
-  overflow-wrap: anywhere;
 }
 
 .backup-import {

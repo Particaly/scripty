@@ -32,12 +32,6 @@ function createDefaultSettings(now = new Date().toISOString()) {
     defaultTimeoutMs: 300000,
     defaultConcurrency: { policy: 'forbid', limit: 1 },
     logRetention: { maxRunsPerTask: 100, maxAgeDays: 30 },
-    defaultInterpreters: {
-      javascript: null,
-      python: null,
-      powershell: null,
-      shell: null
-    },
     defaultWorkingDirectory: null,
     schedulerNoticeAcknowledged: false,
     updatedAt: now

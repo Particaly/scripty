@@ -266,13 +266,12 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
     const stagingRoot = path.join(rootDirectory, '.transactions', `dependencies-${kind}-${randomUUID()}`)
     fs.mkdirSync(stagingRoot, { recursive: true })
     try {
-      const settings = metadataRepository.read('settings')
       let result
       if (kind === 'node') {
         atomicWriteFile(path.join(stagingRoot, NODE_MANIFEST_FILE), Buffer.from(fs.readFileSync(manifestPaths.node)))
-        const nodeReference = settings.defaultInterpreters.javascript ?? 'node'
+        const nodeReference = 'node'
         const nodeExecutable = interpreterResolver.resolve('javascript', nodeReference)
-        if (!nodeExecutable) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '请先配置可用的 Node.js 解释器')
+        if (!nodeExecutable) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '未找到可用的 Node.js 解释器')
 
         // 使用通用查找器查找 npm
         const configuredNpmCli = options.npmCliPath
@@ -297,13 +296,13 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
             }
           }
 
-          if (!npmExecutable) throw new RepositoryError('DEPENDENCY_INSTALL_FAILED', '未找到与所选 Node.js 对应的 npm，请选择包含 npm 的 Node.js 安装')
+          if (!npmExecutable) throw new RepositoryError('DEPENDENCY_INSTALL_FAILED', '未找到与自动发现的 Node.js 对应的 npm，请确认 npm 已安装且可从终端调用')
           result = await runInstaller(npmExecutable, ['install', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: stagingRoot, env: process.env }, spawnProcess)
         }
       } else {
         atomicWriteFile(path.join(stagingRoot, PYTHON_MANIFEST_FILE), Buffer.from(fs.readFileSync(manifestPaths.python)))
-        const basePython = interpreterResolver.resolve('python', settings.defaultInterpreters.python ?? 'python')
-        if (!basePython) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '请先配置可用的 Python 解释器')
+        const basePython = interpreterResolver.resolve('python', 'python')
+        if (!basePython) throw new RepositoryError('INTERPRETER_UNAVAILABLE', '未找到可用的 Python 解释器')
         await runInstaller(basePython, ['-m', 'venv', path.join(stagingRoot, '.venv')], { cwd: stagingRoot, env: process.env }, spawnProcess)
 
         // Python pip 已经内置在 venv 中，无需额外查找

@@ -14,6 +14,12 @@
  */
 
 const SUPPORTED_LANGUAGES = ['javascript', 'python', 'powershell', 'shell']
+const DEFAULT_INTERPRETERS = {
+  javascript: 'node',
+  python: 'python',
+  powershell: 'powershell',
+  shell: 'sh'
+}
 
 /** 解包 Scripty Result 信封；失败时抛出携带错误码的异常供 MCP 客户端展示。 */
 function unwrap(result) {
@@ -34,23 +40,14 @@ function unwrap(result) {
   return result.data
 }
 
-/** 若解释器可执行路径缺省，回退到设置页为该语言配置的默认解释器。 */
-async function resolveInterpreter(scripty, interpreter) {
+/** Normalizes an interpreter request to a built-in command so the shared resolver can discover it automatically. */
+function resolveInterpreter(interpreter) {
   const kind = interpreter?.kind
   if (!SUPPORTED_LANGUAGES.includes(kind)) {
     throw new Error(`interpreter.kind 必须是 ${SUPPORTED_LANGUAGES.join(' / ')} 之一`)
   }
-  const explicit = typeof interpreter?.executable === 'string' ? interpreter.executable.trim() : ''
-  if (explicit) return { kind, executable: explicit }
-
-  const settings = unwrap(await scripty.settings.get())
-  const fallback = settings.defaultInterpreters?.[kind]
-  if (!fallback) {
-    throw new Error(
-      `未提供 interpreter.executable，且设置中没有 ${kind} 的默认解释器，请显式传入解释器命令或路径`
-    )
-  }
-  return { kind, executable: fallback }
+  const executable = typeof interpreter?.executable === 'string' ? interpreter.executable.trim() : ''
+  return { kind, executable: executable || DEFAULT_INTERPRETERS[kind] }
 }
 
 /** 从任务详情提取可复用的可编辑草稿字段，供合并式更新使用。 */
@@ -148,7 +145,7 @@ function buildToolHandlers(scripty) {
     create_task: async (input) => {
       if (typeof input?.name !== 'string' || !input.name.trim()) throw new Error('缺少任务 name')
       if (typeof input?.scriptId !== 'string') throw new Error('缺少 scriptId')
-      const interpreter = await resolveInterpreter(scripty, input.interpreter)
+      const interpreter = resolveInterpreter(input.interpreter)
       const draft = {
         name: input.name,
         note: typeof input.note === 'string' ? input.note : '',
@@ -178,7 +175,7 @@ function buildToolHandlers(scripty) {
       if (typeof input.name === 'string') draft.name = input.name
       if (typeof input.note === 'string') draft.note = input.note
       if (typeof input.scriptId === 'string') draft.scriptId = input.scriptId
-      if (input.interpreter) draft.interpreter = await resolveInterpreter(scripty, input.interpreter)
+      if (input.interpreter) draft.interpreter = resolveInterpreter(input.interpreter)
       if (Array.isArray(input.args)) draft.args = input.args
       if ('workingDirectory' in (input || {})) {
         draft.workingDirectory =
@@ -221,7 +218,7 @@ function buildToolHandlers(scripty) {
 
     validate_task: async (input) => {
       if (typeof input?.scriptId !== 'string') throw new Error('缺少 scriptId')
-      const interpreter = await resolveInterpreter(scripty, input.interpreter)
+      const interpreter = resolveInterpreter(input.interpreter)
       const draft = {
         name: typeof input.name === 'string' ? input.name : '',
         note: typeof input.note === 'string' ? input.note : '',

@@ -125,20 +125,6 @@ export interface MoveManagedPathInput {
   relativePath: string
 }
 
-export interface SelectedScriptFile {
-  selectionToken: string
-  displayName: string
-  detectedLanguage: ScriptLanguage | null
-  size: number
-}
-
-export interface ImportScriptInput {
-  name: string
-  language: ScriptLanguage
-  relativePath: string
-  note: string
-}
-
 export interface TaskQuery {
   search?: string
   enabled?: boolean
@@ -225,32 +211,6 @@ export interface EnvironmentInput {
 export type CreateEnvironmentInput = EnvironmentInput
 export type UpdateEnvironmentInput = EnvironmentInput
 
-export interface DotEnvPreview {
-  previewToken: string
-  entries: Array<{ name: string; value: string }>
-  conflicts: string[]
-}
-
-export interface DotEnvImportInput {
-  scope: EnvironmentScope
-  taskId: EntityId | null
-  sensitive: boolean
-  overwriteExisting: boolean
-}
-
-export interface DotEnvExportInput {
-  scope?: EnvironmentScope
-  taskId?: EntityId
-  includeSensitiveValues: boolean
-}
-
-export interface ImportSummary {
-  created: number
-  updated: number
-  skipped: number
-  warnings: string[]
-}
-
 export interface SaveSummary {
   displayName: string
   size: number
@@ -291,19 +251,6 @@ export interface CleanupSummary {
 }
 
 export type SettingsView = Settings
-export type UpdateSettingsInput = Omit<Settings, 'updatedAt'>
-
-export interface InterpreterSelection {
-  selectionToken: string
-  displayName: string
-}
-
-export interface InterpreterValidation {
-  language: ScriptLanguage
-  valid: boolean
-  version: string | null
-  message: string
-}
 
 export type ExportPreviewManifest = Omit<ExportManifest, 'files'>
 
@@ -383,14 +330,12 @@ export interface AppApi {
   openDataDirectory?(): Promise<Result<void>>
 }
 
-/** Managed script operations; file selection tokens prevent arbitrary path access. */
+/** Managed script and directory operations constrained to Scripty's data root. */
 export interface ScriptsApi {
   list(query?: ScriptQuery): Promise<Result<ScriptSummary[]>>
   get(id: EntityId): Promise<Result<ScriptDetail>>
   create(input: CreateScriptInput): Promise<Result<ScriptDetail>>
   update(id: EntityId, input: UpdateScriptInput): Promise<Result<ScriptDetail>>
-  chooseImportFile(): Promise<Result<SelectedScriptFile | null>>
-  importSelected(selectionToken: string, input: ImportScriptInput): Promise<Result<ScriptDetail>>
   listFolders(): Promise<Result<ScriptFolderSummary[]>>
   createFolder(input: CreateScriptFolderInput): Promise<Result<ScriptFolderSummary>>
   moveFolder(id: EntityId, input: MoveManagedPathInput): Promise<Result<ScriptFolderSummary>>
@@ -431,9 +376,6 @@ export interface EnvironmentsApi {
   update(id: EntityId, input: UpdateEnvironmentInput): Promise<Result<EnvironmentSummary>>
   setEnabled(id: EntityId, enabled: boolean): Promise<Result<EnvironmentSummary>>
   remove(id: EntityId): Promise<Result<void>>
-  chooseDotEnvImport(): Promise<Result<DotEnvPreview | null>>
-  importDotEnv(previewToken: string, input: DotEnvImportInput): Promise<Result<ImportSummary>>
-  exportDotEnv(input: DotEnvExportInput): Promise<Result<SaveSummary | null>>
 }
 
 /** Paginated immutable run history and bounded log reading operations. */
@@ -442,7 +384,7 @@ export interface HistoryApi {
   get(runId: EntityId): Promise<Result<RunRecord>>
   readLog(runId: EntityId, input: LogChunkRequest): Promise<Result<LogChunk>>
   retry(runId: EntityId): Promise<Result<RunRecord>>
-  clear(input: HistoryCleanupInput): Promise<Result<CleanupSummary>>
+  clear(input?: HistoryCleanupInput): Promise<Result<CleanupSummary>>
 }
 
 export type DependencyStatus = 'installed' | 'missing' | 'stale'
@@ -485,15 +427,9 @@ export interface DependenciesApi {
   getStatus(): Promise<Result<DependencyStatusSnapshot>>
 }
 
-/** Device-local defaults and validated interpreter selection operations. */
+/** Read-only persisted defaults used by history retention and runtime services. */
 export interface SettingsApi {
   get(): Promise<Result<SettingsView>>
-  update(input: UpdateSettingsInput): Promise<Result<SettingsView>>
-  chooseInterpreter(language: ScriptLanguage): Promise<Result<InterpreterSelection | null>>
-  validateInterpreter(
-    language: ScriptLanguage,
-    selectionToken: string
-  ): Promise<Result<InterpreterValidation>>
 }
 
 /** The complete constrained API exposed by preload as window.scripty. */

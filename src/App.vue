@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { FunctionalComponent } from 'vue'
 import { applyTheme, useToast, useZtoolsTheme } from 'ztools-ui'
 import TasksView from './components/TasksView.vue'
 import ScriptsView from './components/ScriptsView.vue'
-import SettingsView from './components/SettingsView.vue'
-import RunsView from './components/RunsView.vue'
 import HistoryView from './components/HistoryView.vue'
 import EnvironmentsView from './components/EnvironmentsView.vue'
 import BackupView from './components/BackupView.vue'
@@ -17,15 +16,52 @@ import {
 } from './plugin-entry'
 import type { SchedulerStatus } from './types/api'
 
+/**
+ * Inline nav icons copied from ztools-ui/assets/icons so they theme via
+ * currentColor with no new dependency (same approach as ViewSwitchFab).
+ */
+function strokeIcon(paths: string[], viewBox = '0 0 24 24', strokeWidth = '2'): FunctionalComponent {
+  return () =>
+    h(
+      'svg',
+      { viewBox, fill: 'none', 'aria-hidden': 'true' },
+      paths.map((d) =>
+        h('path', { d, stroke: 'currentColor', 'stroke-width': strokeWidth, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+      )
+    )
+}
+
+const TasksIcon = strokeIcon(['M8 6H21', 'M8 12H21', 'M8 18H21', 'M3 6H3.01', 'M3 12H3.01', 'M3 18H3.01'])
+const ScriptsIcon: FunctionalComponent = () =>
+  h('svg', { viewBox: '0 0 48 48', fill: 'none', 'aria-hidden': 'true' }, [
+    h('rect', { x: '4', y: '8', width: '40', height: '32', rx: '2', fill: 'none', stroke: 'currentColor', 'stroke-width': '4', 'stroke-linejoin': 'round' }),
+    h('path', { d: 'M12 18L19 24L12 30', stroke: 'currentColor', 'stroke-width': '4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
+    h('path', { d: 'M23 32H36', stroke: 'currentColor', 'stroke-width': '4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+  ])
+const DependenciesIcon = strokeIcon([
+  'M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z',
+  'M3.27 6.96 12 12.01l8.73-5.05',
+  'M12 22.08V12'
+])
+const EnvironmentsIcon = strokeIcon(['M4 7V4H20V7', 'M9 20H15', 'M12 4V20'])
+const HistoryIcon = strokeIcon([
+  'M23 4V10H17',
+  'M1 20V14H7',
+  'M3.51 9A9 9 0 0 1 18.36 5.64L23 10M1 14L5.64 18.36A9 9 0 0 0 20.49 15'
+])
+const BackupsIcon: FunctionalComponent = () =>
+  h('svg', { viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': 'true' }, [
+    h('ellipse', { cx: '12', cy: '5', rx: '9', ry: '3', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
+    h('path', { d: 'M21 12C21 13.66 16.97 15 12 15C7.03 15 3 13.66 3 12', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }),
+    h('path', { d: 'M3 5V19C3 20.66 7.03 22 12 22C16.97 22 21 20.66 21 19V5', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+  ])
 const sections = [
-  { id: 'tasks', label: '任务', title: '还没有任务', description: '创建任务后，可在这里管理运行方式、Cron 和启用状态。' },
-  { id: 'scripts', label: '脚本', title: '还没有脚本', description: '新建或导入本地脚本后，源码副本将由 Scripty 托管。' },
-  { id: 'dependencies', label: '依赖', title: '还没有依赖', description: '在这里管理所有脚本共享的 Node.js 与 Python 直接依赖。' },
-  { id: 'environments', label: '环境变量', title: '还没有环境变量', description: '在这里维护任务运行时需要注入的全局变量和任务变量。' },
-  { id: 'running', label: '运行中', title: '暂无运行记录', description: '任务执行后，可在这里查看实时输出。' },
-  { id: 'history', label: '运行历史', title: '暂无运行记录', description: '任务执行后，可在这里查看状态、耗时、退出码和日志。' },
-  { id: 'backups', label: '备份', title: '尚未生成备份预览', description: '选择需要迁移的数据后，可在这里检查导出内容。' },
-  { id: 'settings', label: '设置', title: '设置尚未初始化', description: '后续可在这里配置解释器、任务超时和日志保留策略。' }
+  { id: 'tasks', label: '任务', icon: TasksIcon, title: '还没有任务', description: '创建任务后，可在这里管理运行方式、Cron 和启用状态。' },
+  { id: 'scripts', label: '脚本', icon: ScriptsIcon, title: '还没有脚本', description: '新建脚本后，源码将由 Scripty 统一托管。' },
+  { id: 'dependencies', label: '依赖', icon: DependenciesIcon, title: '还没有依赖', description: '在这里管理所有脚本共享的 Node.js 与 Python 直接依赖。' },
+  { id: 'environments', label: '环境变量', icon: EnvironmentsIcon, title: '还没有环境变量', description: '在这里维护任务运行时需要注入的全局变量和任务变量。' },
+  { id: 'history', label: '运行历史', icon: HistoryIcon, title: '暂无运行记录', description: '任务执行后，可在这里查看运行中任务、状态、耗时、退出码和日志。' },
+  { id: 'backups', label: '备份', icon: BackupsIcon, title: '尚未生成备份', description: '选择需要迁移的数据后，可在这里导出备份。' }
 ] as const
 
 const activeSection = ref<(typeof sections)[number]['id']>('tasks')
@@ -157,7 +193,7 @@ async function handleRunTaskSelection(action: { code: string, option: { title?: 
     error(runResult.error.message)
     return
   }
-  activeSection.value = 'running'
+  activeSection.value = 'history'
   window.ztools.showMainWindow()
   success(`已启动任务“${task.name}”`)
 }
@@ -210,14 +246,6 @@ function showFeedback(type: 'success' | 'error', message: string) {
     />
 
     <aside class="app-sidebar">
-      <div class="app-sidebar__brand">
-        <span class="app-sidebar__mark" aria-hidden="true">S</span>
-        <div class="app-sidebar__title">
-          <h1>Scripty</h1>
-          <p>本地脚本管理</p>
-        </div>
-      </div>
-
       <nav class="app-nav" aria-label="主导航">
         <button
           v-for="section in sections"
@@ -227,7 +255,8 @@ function showFeedback(type: 'success' | 'error', message: string) {
           :aria-current="activeSection === section.id ? 'page' : undefined"
           @click="activeSection = section.id"
         >
-          {{ section.label }}
+          <span class="app-nav__icon" aria-hidden="true"><component :is="section.icon" /></span>
+          <span class="app-nav__label">{{ section.label }}</span>
         </button>
       </nav>
 
@@ -275,17 +304,13 @@ function showFeedback(type: 'success' | 'error', message: string) {
 
       <EnvironmentsView v-else-if="activeSection === 'environments'" :request-confirmation="confirm" @feedback="showFeedback" />
 
-      <RunsView v-else-if="activeSection === 'running'" />
-
-      <HistoryView v-else-if="activeSection === 'history'" @feedback="showFeedback" />
+      <HistoryView v-else-if="activeSection === 'history'" :request-confirmation="confirm" @feedback="showFeedback" />
 
       <BackupView
         v-else-if="activeSection === 'backups'"
         :request-confirmation="confirm"
         @feedback="showFeedback"
       />
-
-      <SettingsView v-else-if="activeSection === 'settings'" @feedback="showFeedback" />
 
       <section v-else class="empty-state" aria-live="polite">
         <div class="empty-state__mark" aria-hidden="true">S</div>
@@ -313,39 +338,6 @@ function showFeedback(type: 'success' | 'error', message: string) {
   background: var(--card-bg);
 }
 
-.app-sidebar__brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 8px 16px;
-  border-bottom: 1px solid var(--divider-color);
-}
-
-.app-sidebar__mark {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 11px;
-  background: var(--primary-light-bg);
-  color: var(--primary-color);
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.app-sidebar__title h1 {
-  margin: 0;
-  font-size: 17px;
-  line-height: 1.2;
-}
-
-.app-sidebar__title p {
-  margin: 2px 0 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
 .app-nav {
   display: flex;
   flex: 1 1 auto;
@@ -354,11 +346,14 @@ function showFeedback(type: 'success' | 'error', message: string) {
   min-height: 0;
   /* horizontal padding reserves room for the focus ring on nav buttons,
      otherwise `overflow-y: auto` clips the ring on the left/right edges. */
-  padding: 14px 8px;
+  padding: 8px;
   overflow-y: auto;
 }
 
 .app-nav__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 12px;
   border: 0;
   border-radius: 8px;
@@ -370,14 +365,40 @@ function showFeedback(type: 'success' | 'error', message: string) {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+.app-nav__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.app-nav__icon :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
+
+.app-nav__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .app-nav__item:hover {
   background: var(--hover-bg);
+}
+
+.app-nav__item:hover .app-nav__icon {
+  color: var(--text-color);
 }
 
 .app-nav__item--active {
   background: var(--primary-light-bg);
   color: var(--primary-color);
   font-weight: 600;
+}
+
+.app-nav__item--active .app-nav__icon {
+  color: var(--primary-color);
 }
 
 .app-sidebar__footer {
