@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { randomUUID } = require('node:crypto')
-const { calculateSha256, createManagedScriptFileName, createManagedScriptPath } = require('./file-repositories')
+const { calculateSha256, createManagedScriptFileName, createManagedScriptPath, normalizeManagedFolderPath, normalizeManagedScriptPath } = require('./file-repositories')
 const { CURRENT_SCHEMA_VERSION, RepositoryError, atomicWriteJson, mapFileSystemError } = require('./metadata-repository')
 
 const PORTABLE_INTERPRETER_DEFAULTS = {
@@ -49,7 +49,7 @@ function materializeEnvironments(importedVariables, localVariables) {
   }))
 }
 
-/** Rejects target relationships and environment uniqueness conflicts before any formal file is replaced. */
+/** Validates target references, portable paths, and Windows-safe file/folder tree conflicts before replacement. */
 function validateImportTarget(target) {
   const scriptIds = new Set(target.scripts.map(script => script.id))
   const taskIds = new Set(target.tasks.map(task => task.id))
@@ -61,22 +61,44 @@ function validateImportTarget(target) {
     if (names.has(key)) throw new RepositoryError('IMPORT_CONFLICT', '导入后同一作用域将出现重名环境变量')
     names.add(key)
   }
+  const nodes = []
+  for (const script of target.scripts) {
+    let normalized
+    try { normalized = normalizeManagedScriptPath(script.relativePath, script.language) } catch { throw new RepositoryError('IMPORT_CONFLICT', '导入目标包含无效脚本路径') }
+    if (normalized !== script.relativePath) throw new RepositoryError('IMPORT_CONFLICT', '导入目标包含非规范脚本路径')
+    nodes.push({ kind: 'script', key: normalized.toLowerCase() })
+  }
+  for (const folder of target.scriptFolders ?? []) {
+    let normalized
+    try { normalized = normalizeManagedFolderPath(folder.relativePath) } catch { throw new RepositoryError('IMPORT_CONFLICT', '导入目标包含无效脚本目录路径') }
+    if (normalized !== folder.relativePath) throw new RepositoryError('IMPORT_CONFLICT', '导入目标包含非规范脚本目录路径')
+    nodes.push({ kind: 'folder', key: normalized.toLowerCase() })
+  }
+  const seen = new Map()
+  for (const node of nodes) {
+    const conflict = seen.has(node.key) || nodes.some(candidate => candidate !== node && (
+      (node.kind === 'script' && candidate.key.startsWith(`${node.key}/`)) ||
+      (candidate.kind === 'script' && node.key.startsWith(`${candidate.key}/`))
+    ))
+    if (conflict) throw new RepositoryError('IMPORT_CONFLICT', '导入目标的脚本与目录路径存在冲突或重复')
+    seen.set(node.key, node)
+  }
 }
 
-/** Converts portable UUID-file scripts into collision-free local real paths while preserving same-ID paths. */
+/** Converts portable scripts to local paths, preserving 1.1 paths for new scripts and resolving collisions deterministically. */
 function materializeScripts(importedScripts, localScripts) {
   const localById = new Map(localScripts.map(script => [script.id, script]))
-  const used = new Set(localScripts.map(script => script.relativePath?.toLocaleLowerCase()).filter(Boolean))
+  const used = new Set(localScripts.map(script => script.relativePath?.toLowerCase()).filter(Boolean))
   return importedScripts.map(script => {
     const local = localById.get(script.id)
-    let relativePath = local?.relativePath ?? createManagedScriptPath(script.name, script.language, script.id)
+    let relativePath = local?.relativePath ?? script.relativePath ?? createManagedScriptPath(script.name, script.language, script.id)
     let counter = 0
-    while (!local && used.has(relativePath.toLocaleLowerCase())) {
+    while (!local && used.has(relativePath.toLowerCase())) {
       counter += 1
       const dot = relativePath.lastIndexOf('.')
       relativePath = `${relativePath.slice(0, dot)}-${script.id.slice(0, 8)}${counter > 1 ? `-${counter}` : ''}${relativePath.slice(dot)}`
     }
-    used.add(relativePath.toLocaleLowerCase())
+    used.add(relativePath.toLowerCase())
     const { managedFileName, ...portable } = structuredClone(script)
     return { ...portable, relativePath }
   })
@@ -205,6 +227,7 @@ module.exports = {
   commitImportTarget,
   materializeEnvironments,
   materializeTasks,
+  materializeScripts,
   recoverImportTransactions,
   validateImportTarget
 }

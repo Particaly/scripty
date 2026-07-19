@@ -73,6 +73,35 @@ function copyRendererFile(rendererDirectory, stagingDirectory, relativePath) {
   fs.copyFileSync(source, target)
 }
 
+/**
+ * Scope-level polyfill prepended to the preload bundle so bundled ZIP libraries (yauzl/yazl via
+ * fd-slicer) resolve bare `setImmediate`/`clearImmediate` through the closure scope chain.
+ *
+ * Some plugin hosts (notably the ZTools preload sandbox on Windows) expose a `globalThis` whose
+ * properties are NOT the same object bare identifier resolution reads against, so assigning
+ * `globalThis.setImmediate` does not make a bare `setImmediate(...)` call resolvable and yauzl
+ * throws ReferenceError "setImmediate is not defined". A `var` declared at bundle top scope sits
+ * outside every generated `__commonJS` module wrapper, so bare references inside those wrappers
+ * resolve to it via the normal scope chain regardless of how the host wires its global object.
+ */
+const PRELOAD_RUNTIME_BANNER = `"use strict";
+var setImmediate = (function (g) {
+  if (typeof g.setImmediate === "function") return g.setImmediate;
+  var fn;
+  try { var timers = require("node:timers"); if (typeof timers.setImmediate === "function") fn = timers.setImmediate; } catch (e) {}
+  if (typeof fn !== "function") fn = function (callback) { var args = Array.prototype.slice.call(arguments, 1); return setTimeout(function () { callback.apply(null, args); }, 0); };
+  try { if (typeof g.setImmediate !== "function") g.setImmediate = fn; } catch (e) {}
+  return fn;
+})(globalThis);
+var clearImmediate = (function (g) {
+  if (typeof g.clearImmediate === "function") return g.clearImmediate;
+  var fn;
+  try { var timers = require("node:timers"); if (typeof timers.clearImmediate === "function") fn = timers.clearImmediate; } catch (e) {}
+  if (typeof fn !== "function") fn = function (id) { return clearTimeout(id); };
+  try { if (typeof g.clearImmediate !== "function") g.clearImmediate = fn; } catch (e) {}
+  return fn;
+})(globalThis);`
+
 /** Bundles preload and all package dependencies into one CommonJS file, leaving only Node built-ins external. */
 async function bundlePreload(stagingDirectory, productionManifest) {
   const output = path.join(stagingDirectory, 'preload/services.js')
@@ -89,6 +118,7 @@ async function bundlePreload(stagingDirectory, productionManifest) {
     sourcemap: false,
     minify: false,
     legalComments: 'none',
+    banner: { js: PRELOAD_RUNTIME_BANNER },
     plugins: [{
       name: 'production-manifest',
       /** Redirects preload's adjacent manifest import to a path-stable virtual production manifest. */

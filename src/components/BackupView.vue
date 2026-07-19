@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { BackupImportMode, BackupImportSummary, ExportPreview, ImportChangePreview, ImportPackagePreview, SensitiveExportConfirmation } from '../types/api'
+import type { BackupImportMode, ExportPreview, ImportChangePreview, ImportPackagePreview, SensitiveExportConfirmation } from '../types/api'
 import type { ExportOptions } from '../types/domain'
 
 const emit = defineEmits<{
@@ -28,22 +28,12 @@ const previewConfirmation = ref<SensitiveExportConfirmation | undefined>()
 const operation = ref<'preview' | 'export' | 'import-validation' | 'import' | null>(null)
 const expired = ref(false)
 const importPreview = ref<ImportPackagePreview | null>(null)
+const importPreviewModalVisible = ref(false)
 const importMode = ref<BackupImportMode>('merge')
-const importResult = ref<BackupImportSummary | null>(null)
 const importValidationTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const previewAvailable = computed(() => typeof window.scripty?.backups?.previewExport === 'function')
 let requestGeneration = 0
 let expiryTimer: ReturnType<typeof setTimeout> | null = null
-
-/** Formats an ISO timestamp as local `yyyy-mm-dd hh:mm:ss`, leaving unparseable values untouched. */
-function formatDateTime(value: string | null) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  const pad = (input: number) => String(input).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
-    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
 
 /** Formats one import mode's total counters into concise preview text. */
 function formatImportChanges(mode: ImportChangePreview) {
@@ -54,6 +44,7 @@ function formatImportChanges(mode: ImportChangePreview) {
 /** Clears the renderer copy of an import preview without consuming or exposing its preload snapshot. */
 function invalidateImportPreview() {
   importPreview.value = null
+  importPreviewModalVisible.value = false
   if (importValidationTimer.value !== null) clearTimeout(importValidationTimer.value)
   importValidationTimer.value = null
 }
@@ -170,6 +161,7 @@ async function validateImportBackup() {
   }
   if (!result.data) return
   importPreview.value = result.data
+  importPreviewModalVisible.value = true
   const delay = Math.max(0, Date.parse(result.data.expiresAt) - Date.now())
   importValidationTimer.value = setTimeout(invalidateImportPreview, delay)
   emit('feedback', 'success', '备份包校验通过，已生成变更预览')
@@ -200,7 +192,6 @@ async function applyImportBackup() {
     emit('feedback', 'error', result.error.message)
     return
   }
-  importResult.value = result.data
   emit('feedback', 'success', importMode.value === 'merge' ? '合并导入完成' : '覆盖恢复完成')
 }
 
@@ -267,44 +258,37 @@ onBeforeUnmount(() => {
       <ZButton :loading="operation === 'import-validation'" :disabled="operation !== null" @click="validateImportBackup">
         选择并校验备份
       </ZButton>
-      <article v-if="importPreview" class="backup-preview backup-import__preview" aria-live="polite">
-        <div class="backup-preview__heading">
-          <div><h3>导入内容摘要</h3><p>校验已完成；以下仅为只读预览，尚未修改任何本地数据。</p></div>
-          <ZTag :type="importPreview.package.options.includeSensitiveValues ? 'warning' : 'success'">
-            格式 {{ importPreview.package.formatVersion }}
-          </ZTag>
-        </div>
-        <dl class="backup-summary">
-          <div><dt>导出时间</dt><dd>{{ formatDateTime(importPreview.package.exportedAt) }}</dd></div>
-          <div><dt>脚本</dt><dd>{{ importPreview.package.entities.scripts }}</dd></div>
-          <div><dt>任务</dt><dd>{{ importPreview.package.entities.tasks }}</dd></div>
-          <div><dt>环境变量</dt><dd>{{ importPreview.package.entities.environments }}</dd></div>
-          <div><dt>包含敏感值</dt><dd>{{ importPreview.package.options.includeSensitiveValues ? '是' : '否' }}</dd></div>
-        </dl>
-        <dl class="backup-summary backup-import__modes">
-          <div><dt>合并导入</dt><dd>{{ formatImportChanges(importPreview.merge) }}</dd></div>
-          <div><dt>覆盖恢复</dt><dd>{{ formatImportChanges(importPreview.overwrite) }}</dd></div>
-        </dl>
-        <div class="backup-import__mode-actions">
-          <ZRadio v-model="importMode" value="merge">合并导入</ZRadio>
-          <ZRadio v-model="importMode" value="overwrite">覆盖恢复</ZRadio>
-          <ZButton type="primary" :loading="operation === 'import'" :disabled="operation !== null" @click="applyImportBackup">
-            {{ importMode === 'merge' ? '应用合并导入' : '应用覆盖恢复' }}
-          </ZButton>
-        </div>
-        <ul class="backup-warnings">
-          <li v-for="warning in importPreview.warnings" :key="warning">{{ warning }}</li>
-        </ul>
-      </article>
-      <article v-if="importResult" class="backup-result backup-import__status" aria-live="polite">
-        <div class="backup-preview__heading">
-          <div><h3>导入完成</h3><p>{{ importResult.mode === 'merge' ? '合并导入' : '覆盖恢复' }}</p></div>
-          <ZTag type="success">{{ formatImportChanges(importResult.changes) }}</ZTag>
-        </div>
-        <ul class="backup-warnings">
-          <li v-for="warning in importResult.warnings" :key="warning">{{ warning }}</li>
-        </ul>
-      </article>
+      <ZModal v-model:show="importPreviewModalVisible" :mask-closable="false" trap-focus auto-focus>
+        <article v-if="importPreview" class="backup-preview backup-preview--modal" aria-labelledby="backup-import-preview-heading" aria-live="polite">
+          <div class="backup-preview__heading">
+            <div><h3 id="backup-import-preview-heading">是否确认导入</h3></div>
+          </div>
+          <dl class="backup-summary">
+            <div><dt>脚本</dt><dd>{{ importPreview.package.entities.scripts }}</dd></div>
+            <div><dt>任务</dt><dd>{{ importPreview.package.entities.tasks }}</dd></div>
+            <div><dt>环境变量</dt><dd>{{ importPreview.package.entities.environments }}</dd></div>
+          </dl>
+          <div class="backup-import__mode-list">
+            <div class="backup-import__mode-option">
+              <ZRadio v-model="importMode" value="merge">合并导入</ZRadio>
+              <span class="backup-import__mode-changes">{{ formatImportChanges(importPreview.merge) }}</span>
+            </div>
+            <div class="backup-import__mode-option">
+              <ZRadio v-model="importMode" value="overwrite">覆盖恢复</ZRadio>
+              <span class="backup-import__mode-changes">{{ formatImportChanges(importPreview.overwrite) }}</span>
+            </div>
+          </div>
+          <ul v-if="importPreview.warnings.length" class="backup-warnings">
+            <li v-for="warning in importPreview.warnings" :key="warning">{{ warning }}</li>
+          </ul>
+          <div class="backup-preview__actions">
+            <ZButton type="default" :disabled="operation !== null" @click="invalidateImportPreview">取消</ZButton>
+            <ZButton type="primary" :loading="operation === 'import'" :disabled="operation !== null" @click="applyImportBackup">
+              {{ importMode === 'merge' ? '确认合并导入' : '确认覆盖恢复' }}
+            </ZButton>
+          </div>
+        </article>
+      </ZModal>
     </section>
   </section>
 </template>
@@ -329,8 +313,7 @@ onBeforeUnmount(() => {
   background: var(--warning-light-bg);
 }
 
-.backup-preview,
-.backup-result {
+.backup-preview {
   padding: 20px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
@@ -360,10 +343,6 @@ onBeforeUnmount(() => {
 }
 
 .backup-preview__environment-option {
-  margin-top: 18px;
-}
-
-.backup-result {
   margin-top: 18px;
 }
 
@@ -405,21 +384,26 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 
-.backup-import__status,
-.backup-import__preview {
-  grid-column: 1 / -1;
-  margin: 0;
+.backup-import__mode-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
 }
 
-.backup-import__modes {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.backup-import__mode-actions {
+.backup-import__mode-option {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 12px;
-  margin: 18px 0;
+}
+
+.backup-import__mode-changes {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.backup-preview--modal .backup-warnings {
+  margin: 14px 0 0;
 }
 </style>

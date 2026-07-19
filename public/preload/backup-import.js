@@ -7,7 +7,7 @@ const { createHash } = require('node:crypto')
 const { TextDecoder } = require('node:util')
 const yauzl = require('yauzl')
 const { isValidFivePartCron } = require('./cron-utils')
-const { createManagedScriptFileName } = require('./file-repositories')
+const { createManagedScriptFileName, normalizeManagedFolderPath, normalizeManagedScriptPath } = require('./file-repositories')
 const { RepositoryError, mapFileSystemError } = require('./metadata-repository')
 const {
   EXPORT_FORMAT_VERSION,
@@ -213,6 +213,15 @@ function openZip(fileDescriptor) {
   })
 }
 
+/** Converts a ZIP parser failure into a bounded single-line diagnostic without exposing stack traces. */
+function formatZipDirectoryError(error) {
+  const detail = typeof error?.message === 'string'
+    ? error.message.replace(/[\x00-\x1f\x7f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180)
+    : ''
+  const reason = detail ? `（解析器原因：${detail}）` : ''
+  return `备份 ZIP 目录无效${reason}。请重新复制并直接选择 Scripty 导出的原始 ZIP，不要解压后重新压缩`
+}
+
 /** Scans every central-directory entry before extraction and enforces path, type, count, and ratio limits. */
 function scanArchiveEntries(zipFile) {
   return new Promise((resolve, reject) => {
@@ -222,17 +231,20 @@ function scanArchiveEntries(zipFile) {
     const fail = (error) => {
       if (settled) return
       settled = true
-      reject(error instanceof RepositoryError ? error : new RepositoryError('PACKAGE_INVALID', '备份 ZIP 目录无效', error))
+      reject(error instanceof RepositoryError ? error : new RepositoryError('PACKAGE_INVALID', formatZipDirectoryError(error), error))
     }
     zipFile.once('error', fail)
     zipFile.on('entry', (entry) => {
       try {
         if (entries.size + 1 > MAX_PACKAGE_FILES) throw new RepositoryError('PACKAGE_LIMIT_EXCEEDED', '备份文件数量超过安全限制')
         const entryPath = entry.fileName
-        const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff
+        const creatorSystem = (entry.versionMadeBy >>> 8) & 0xff
+        const hasPosixMode = creatorSystem === 3 || creatorSystem === 19
+        const unixMode = hasPosixMode ? (entry.externalFileAttributes >>> 16) & 0xffff : 0
         const fileType = unixMode & 0xf000
-        const isDirectory = entryPath.endsWith('/') || (entry.externalFileAttributes & 0x10) !== 0
-        if (!isAllowedPackagePath(entryPath) || isDirectory || fileType === 0xa000 || (fileType !== 0 && fileType !== 0x8000)) {
+        const isDirectory = entryPath.endsWith('/') || (entry.externalFileAttributes & 0x10) !== 0 || (hasPosixMode && fileType === 0x4000)
+        const hasInvalidPosixType = hasPosixMode && fileType !== 0 && fileType !== 0x8000
+        if (!isAllowedPackagePath(entryPath) || isDirectory || hasInvalidPosixType) {
           throw new RepositoryError('PACKAGE_INVALID', '备份包含非法路径或文件类型')
         }
         if ((entry.generalPurposeBitFlag & 1) !== 0 || ![0, 8].includes(entry.compressionMethod)) {
@@ -298,6 +310,36 @@ function reconcileManifestEntries(manifest, entries) {
   }
 }
 
+/** Validates portable script and folder paths as one Windows-safe tree before import staging. */
+function validatePortableTreePaths(scripts, folders, legacy) {
+  if (legacy) return
+  const nodes = []
+  for (const script of scripts) {
+    let normalized
+    try { normalized = normalizeManagedScriptPath(script.relativePath, script.language) } catch { throw new RepositoryError('PACKAGE_INVALID', '脚本路径无效') }
+    if (normalized !== script.relativePath) throw new RepositoryError('PACKAGE_INVALID', '脚本路径必须是规范的相对路径')
+    nodes.push({ kind: 'script', path: normalized, key: normalized.toLowerCase() })
+  }
+  for (const folder of folders) {
+    let normalized
+    try { normalized = normalizeManagedFolderPath(folder.relativePath) } catch { throw new RepositoryError('PACKAGE_INVALID', '脚本目录路径无效') }
+    if (normalized !== folder.relativePath) throw new RepositoryError('PACKAGE_INVALID', '脚本目录路径必须是规范的相对路径')
+    nodes.push({ kind: 'folder', path: normalized, key: normalized.toLowerCase() })
+  }
+  const seen = new Map()
+  for (const node of nodes) {
+    const previous = seen.get(node.key)
+    const hasFileTreeConflict = nodes.some(candidate => candidate !== node && (
+      (node.kind === 'script' && candidate.key.startsWith(`${node.key}/`)) ||
+      (candidate.kind === 'script' && node.key.startsWith(`${candidate.key}/`))
+    ))
+    if (previous || hasFileTreeConflict) {
+      throw new RepositoryError('PACKAGE_INVALID', '脚本与目录路径存在冲突或重复')
+    }
+    seen.set(node.key, node)
+  }
+}
+
 /** Validates current-version envelopes, portable entities, references, counts, and script-file relationships. */
 function validateImportDocuments(manifest, documents, hashes) {
   const legacy = manifest.formatVersion === LEGACY_EXPORT_FORMAT_VERSION
@@ -344,9 +386,10 @@ function validateImportDocuments(manifest, documents, hashes) {
   for (const folder of scriptFolders.values()) {
     assertExactKeys(folder, ['id', 'relativePath', 'createdAt', 'updatedAt'], '脚本目录')
     assertString(folder.relativePath, '脚本目录路径', { allowEmpty: false })
-    if (!isCanonicalIsoDateTime(folder.createdAt) || !isCanonicalIsoDateTime(folder.updatedAt) || folderPaths.has(folder.relativePath.toLocaleLowerCase())) throw new RepositoryError('PACKAGE_INVALID', '脚本目录无效或重复')
-    folderPaths.add(folder.relativePath.toLocaleLowerCase())
+    if (!isCanonicalIsoDateTime(folder.createdAt) || !isCanonicalIsoDateTime(folder.updatedAt) || folderPaths.has(folder.relativePath.toLowerCase())) throw new RepositoryError('PACKAGE_INVALID', '脚本目录无效或重复')
+    folderPaths.add(folder.relativePath.toLowerCase())
   }
+  validatePortableTreePaths([...scripts.values()], [...scriptFolders.values()], legacy)
   const dependencyNames = new Set()
   for (const dependency of dependencies.values()) {
     assertExactKeys(dependency, ['id', 'kind', 'name', 'versionSpec', 'createdAt', 'updatedAt'], '依赖')
