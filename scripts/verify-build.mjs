@@ -1,21 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { hashDirectory, listFiles, readJson, readZipEntries, RELEASE_ROOT, ROOT, sha256 } from './release-lib.mjs'
+import { DIST_ROOT, hashDirectory, listFiles, readJson, ROOT } from './build-lib.mjs'
 
 const REQUIRED_FILES = ['index.html', 'logo.png', 'plugin.json', 'preload/package.json', 'preload/services.js']
 const ALLOWED_PREFIXES = ['assets/']
 const FORBIDDEN_TEXT = ['localhost:5173', ROOT, '/Users/Apple/', 'C:\\Users\\']
 
-/** Resolves the versioned release paths from the root package metadata. */
-export function getReleasePaths() {
-  const packageJson = readJson(path.join(ROOT, 'package.json'))
-  const artifactName = `${packageJson.name}-${packageJson.version}`
+/** Resolves the installable dist path together with package metadata used during verification. */
+export function getBuildPaths() {
   return {
-    packageJson,
-    artifactName,
-    directory: path.join(RELEASE_ROOT, artifactName),
-    zipPath: path.join(RELEASE_ROOT, `${artifactName}.zip`)
+    packageJson: readJson(path.join(ROOT, 'package.json')),
+    directory: DIST_ROOT
   }
 }
 
@@ -38,13 +34,13 @@ export function verifyManifest(manifest, packageJson, files) {
   }
 }
 
-/** Verifies the canonical release directory whitelist, local HTML resources, and bundled preload closure. */
-export function verifyReleaseDirectory(directory, packageJson) {
+/** Verifies the dist whitelist, local HTML resources, production manifest, and bundled preload closure. */
+export function verifyBuildDirectory(directory, packageJson) {
   const files = listFiles(directory)
-  for (const required of REQUIRED_FILES) if (!files.includes(required)) throw new Error(`Missing required release file: ${required}`)
+  for (const required of REQUIRED_FILES) if (!files.includes(required)) throw new Error(`Missing required build file: ${required}`)
   for (const file of files) {
     const allowed = REQUIRED_FILES.includes(file) || ALLOWED_PREFIXES.some(prefix => file.startsWith(prefix))
-    if (!allowed || file.endsWith('.map') || file.includes('node_modules/')) throw new Error(`Unexpected release file: ${file}`)
+    if (!allowed || file.endsWith('.map') || file.includes('node_modules/')) throw new Error(`Unexpected build file: ${file}`)
   }
   const manifest = readJson(path.join(directory, 'plugin.json'))
   verifyManifest(manifest, packageJson, files)
@@ -54,7 +50,7 @@ export function verifyReleaseDirectory(directory, packageJson) {
   const textFiles = files.filter(file => /\.(?:html|json|js|css)$/.test(file))
   for (const file of textFiles) {
     const content = fs.readFileSync(path.join(directory, ...file.split('/')), 'utf8')
-    for (const forbidden of FORBIDDEN_TEXT) if (content.includes(forbidden)) throw new Error(`Release text leaks forbidden value in ${file}`)
+    for (const forbidden of FORBIDDEN_TEXT) if (content.includes(forbidden)) throw new Error(`Build text leaks forbidden value in ${file}`)
   }
   const preload = fs.readFileSync(path.join(directory, 'preload/services.js'), 'utf8')
   if (/require\(["'](?:cron-parser|luxon|yauzl|yazl|pend|buffer-crc32|\.\/app-service)["']\)/.test(preload)) {
@@ -63,30 +59,16 @@ export function verifyReleaseDirectory(directory, packageJson) {
   return { files, manifest, hashes: hashDirectory(directory) }
 }
 
-/** Compares the deterministic ZIP entry set and bytes with the canonical release directory. */
-export async function verifyReleaseZip(directory, zipPath, files) {
-  const entries = await readZipEntries(zipPath)
-  const entryNames = [...entries.keys()]
-  if (JSON.stringify(entryNames) !== JSON.stringify(files)) throw new Error('ZIP entry order or set differs from release directory')
-  for (const file of files) {
-    const source = fs.readFileSync(path.join(directory, ...file.split('/')))
-    if (!source.equals(entries.get(file))) throw new Error(`ZIP entry differs from directory: ${file}`)
-  }
-  return sha256(zipPath)
+/** Verifies the current installable dist directory without creating any secondary artifact. */
+export function verifyCurrentBuild() {
+  const paths = getBuildPaths()
+  return { ...paths, ...verifyBuildDirectory(paths.directory, paths.packageJson) }
 }
 
-/** Verifies the currently generated release directory and ZIP manifest. */
-export async function verifyCurrentRelease() {
-  const paths = getReleasePaths()
-  const directoryResult = verifyReleaseDirectory(paths.directory, paths.packageJson)
-  const zipSha256 = await verifyReleaseZip(paths.directory, paths.zipPath, directoryResult.files)
-  return { ...paths, ...directoryResult, zipSha256 }
+/** Runs dist verification as a CLI while preserving exports for clean-copy verification. */
+function main() {
+  const result = verifyCurrentBuild()
+  console.log(JSON.stringify({ directory: result.directory, files: result.files.length }, null, 2))
 }
 
-/** Runs release verification as a CLI while preserving exports for clean-copy verification. */
-async function main() {
-  const result = await verifyCurrentRelease()
-  console.log(JSON.stringify({ directory: result.directory, zipPath: result.zipPath, zipSha256: result.zipSha256, files: result.files.length }, null, 2))
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main()
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) main()

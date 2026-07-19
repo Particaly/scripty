@@ -2,9 +2,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { ROOT, sha256 } from './release-lib.mjs'
+import { hashDirectory, ROOT, sha256 } from './build-lib.mjs'
 
-const EXCLUDED_NAMES = new Set(['.claude', '.git', 'dist', 'node_modules', 'release'])
+const EXCLUDED_NAMES = new Set(['.claude', '.git', 'dist', 'dist.staging', 'node_modules', 'release'])
 
 /** Copies the current source tree to a repository-external directory while excluding generated and private state. */
 function copySourceTree(source, target) {
@@ -30,34 +30,33 @@ function npmCommand() {
   return process.platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
-/** Produces a release in a source copy with no prior dependencies or build output and returns its ZIP digest. */
-function buildCleanRelease(sourceRoot, parentDirectory, name) {
+/** Builds one source copy with no prior dependencies or output and returns its stable dist digest. */
+function buildCleanDist(sourceRoot, parentDirectory, name) {
   const copyRoot = path.join(parentDirectory, name)
   copySourceTree(sourceRoot, copyRoot)
-  if (fs.existsSync(path.join(copyRoot, 'node_modules')) || fs.existsSync(path.join(copyRoot, 'release'))) throw new Error('Clean copy contains generated state')
+  if (fs.existsSync(path.join(copyRoot, 'node_modules')) || fs.existsSync(path.join(copyRoot, 'dist'))) {
+    throw new Error('Clean copy contains generated state')
+  }
   run(npmCommand(), ['ci', '--ignore-scripts'], copyRoot)
   run(npmCommand(), ['run', 'build'], copyRoot)
-  run('node', ['scripts/release.mjs'], copyRoot)
-  run('node', ['scripts/verify-release.mjs'], copyRoot)
-  const packageJson = JSON.parse(fs.readFileSync(path.join(copyRoot, 'package.json'), 'utf8'))
-  const zipPath = path.join(copyRoot, 'release', `${packageJson.name}-${packageJson.version}.zip`)
-  const sums = fs.readFileSync(path.join(copyRoot, 'release/SHA256SUMS'), 'utf8')
-  return { copyRoot, zipPath, zipSha256: sha256(zipPath), sums }
+  const hashes = hashDirectory(path.join(copyRoot, 'dist'))
+  const serializedHashes = JSON.stringify(hashes)
+  return { copyRoot, distSha256: sha256(Buffer.from(serializedHashes)), serializedHashes }
 }
 
-/** Builds two clean copies and asserts byte-identical archives and file hash manifests for reproducibility. */
+/** Builds two clean copies and asserts file-for-file identical dist directories for reproducibility. */
 async function main() {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'scripty-clean-release-'))
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'scripty-clean-build-'))
   try {
-    const first = buildCleanRelease(ROOT, parent, 'first')
-    const second = buildCleanRelease(ROOT, parent, 'second')
-    if (first.zipSha256 !== second.zipSha256 || first.sums !== second.sums) throw new Error('Clean release builds are not deterministic')
+    const first = buildCleanDist(ROOT, parent, 'first')
+    const second = buildCleanDist(ROOT, parent, 'second')
+    if (first.serializedHashes !== second.serializedHashes) throw new Error('Clean dist builds are not deterministic')
     console.log(JSON.stringify({
       platform: `${process.platform}-${process.arch}`,
       node: process.version,
       npm: spawnSync(npmCommand(), ['--version'], { encoding: 'utf8' }).stdout.trim(),
       sourceState: 'working-tree-copy',
-      zipSha256: first.zipSha256,
+      distSha256: first.distSha256,
       deterministicBuilds: 2,
       windowsZToolsArtifactVerification: 'pending'
     }, null, 2))

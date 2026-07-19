@@ -88,19 +88,23 @@ npm ci
 npm run dev          # 开发地址 http://localhost:5177
 ```
 
-构建走类型检查 + Vite 生产构建，产物在 `dist/`：
+构建走类型检查、Vite 生产构建和 preload 依赖打包，最终产物在 `dist/`，可以直接整体导入 ZTools：
 
 ```bash
-npm run check
+npm run build
 ```
 
-发制品用 `npm run release`，再 `npm run release:verify` 校验清单、资源、自包含 preload、ZIP 和文件哈希。想在仓库外的全新副本上跑两遍安装构建、校验哈希一致性：
+`build` 会把 `cron-parser`、压缩包处理等 preload 依赖内嵌到 `dist/preload/services.js`，不会在插件中保留 `node_modules` 或未打包的 preload 源文件。可以额外运行构建校验：
+
+```bash
+npm run build:verify
+```
+
+想在仓库外的全新副本上跑两遍安装构建、校验 `dist/` 文件哈希一致性：
 
 ```bash
 npm run verify:clean
 ```
-
-正式制品是 `release/scripty-<version>/` 目录，整体导入 ZTools、走「任务库」进去就行。注意 `dist/` 只是 Vite 中间产物，里面留着开发用的东西，不是正式制品——别只拿 `index.html` 就去用。
 
 ## 项目结构
 

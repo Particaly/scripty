@@ -5,10 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc && vite build",
+    "build": "vue-tsc && vite build && node scripts/finalize-build.mjs",
     "check": "npm run build",
-    "release": "npm run check && node scripts/release.mjs",
-    "release:verify": "node scripts/verify-release.mjs",
+    "build:verify": "npm run build && node scripts/verify-build.mjs",
     "verify:clean": "node scripts/verify-clean-copy.mjs"
   },
   "dependencies": {
