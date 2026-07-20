@@ -69,8 +69,107 @@ function toTaskDraft(task) {
   }
 }
 
+/** 判断 MCP 输入是否显式提供某字段，供合并式更新区分“省略”和空值。 */
+function hasOwn(input, field) {
+  return Boolean(input) && Object.prototype.hasOwnProperty.call(input, field)
+}
+
+/**
+ * 校验并规范化环境变量选择器。
+ * 选择器只使用名称和作用域定位，不读取或返回变量值。
+ */
+function normalizeEnvironmentSelector(selector) {
+  const name = typeof selector?.name === 'string' ? selector.name.trim() : ''
+  if (!name) throw new Error('缺少环境变量 selector.name')
+
+  const normalized = { name }
+  if (hasOwn(selector, 'scope')) {
+    if (!['global', 'task'].includes(selector.scope)) {
+      throw new Error('selector.scope 必须是 global 或 task')
+    }
+    normalized.scope = selector.scope
+  }
+  if (hasOwn(selector, 'taskId')) {
+    if (typeof selector.taskId !== 'string' || !selector.taskId.trim()) {
+      throw new Error('selector.taskId 必须是非空字符串')
+    }
+    if (normalized.scope === 'global') {
+      throw new Error('全局环境变量选择器不能指定 taskId')
+    }
+    normalized.taskId = selector.taskId
+  }
+  return normalized
+}
+
+/**
+ * 按名称及可选作用域唯一定位环境变量。
+ * 查询得到的摘要仅在 preload 内使用；错误和返回值均不包含值或遮罩值。
+ */
+async function findEnvironmentBySelector(scripty, selector) {
+  const normalized = normalizeEnvironmentSelector(selector)
+  const query = { search: normalized.name }
+  if (normalized.scope) query.scope = normalized.scope
+  if (normalized.taskId) query.taskId = normalized.taskId
+
+  const summaries = unwrap(await scripty.environments.list(query))
+  const matches = summaries.filter(variable =>
+    variable.name === normalized.name &&
+    (!normalized.scope || variable.scope === normalized.scope) &&
+    (!normalized.taskId || variable.taskId === normalized.taskId)
+  )
+  if (matches.length === 0) throw new Error(`未找到环境变量 "${normalized.name}"`)
+  if (matches.length > 1) {
+    throw new Error(`环境变量 "${normalized.name}" 匹配到多个结果，请补充 scope 或 taskId`)
+  }
+  return matches[0]
+}
+
+/**
+ * 构造环境变量合并式更新输入。
+ * 省略 value 时仅在 preload 内读取旧值以完成持久化，旧值不会进入 MCP 响应。
+ */
+async function buildEnvironmentUpdateInput(scripty, current, changes) {
+  if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+    throw new Error('缺少环境变量 changes 对象')
+  }
+  const supportedFields = ['name', 'value', 'note', 'scope', 'taskId', 'enabled', 'sensitive']
+  if (!supportedFields.some(field => hasOwn(changes, field))) {
+    throw new Error('changes 至少需要提供一个可编辑字段')
+  }
+
+  if (hasOwn(changes, 'name') && typeof changes.name !== 'string') throw new Error('changes.name 必须是字符串')
+  if (hasOwn(changes, 'value') && typeof changes.value !== 'string') throw new Error('changes.value 必须是字符串')
+  if (hasOwn(changes, 'note') && typeof changes.note !== 'string') throw new Error('changes.note 必须是字符串')
+  if (hasOwn(changes, 'scope') && !['global', 'task'].includes(changes.scope)) {
+    throw new Error('changes.scope 必须是 global 或 task')
+  }
+  if (hasOwn(changes, 'taskId') && changes.taskId !== null && typeof changes.taskId !== 'string') {
+    throw new Error('changes.taskId 必须是字符串或 null')
+  }
+  if (hasOwn(changes, 'enabled') && typeof changes.enabled !== 'boolean') throw new Error('changes.enabled 必须是布尔值')
+  if (hasOwn(changes, 'sensitive') && typeof changes.sensitive !== 'boolean') throw new Error('changes.sensitive 必须是布尔值')
+
+  let value = changes.value
+  if (!hasOwn(changes, 'value')) {
+    const revealed = unwrap(await scripty.environments.reveal(current.id))
+    value = revealed.value
+  }
+
+  const scope = hasOwn(changes, 'scope') ? changes.scope : current.scope
+  return {
+    name: hasOwn(changes, 'name') ? changes.name : current.name,
+    value,
+    note: hasOwn(changes, 'note') ? changes.note : current.note,
+    scope,
+    taskId: scope === 'global' ? null : (hasOwn(changes, 'taskId') ? changes.taskId : current.taskId),
+    enabled: hasOwn(changes, 'enabled') ? changes.enabled : current.enabled,
+    sensitive: hasOwn(changes, 'sensitive') ? changes.sensitive : current.sensitive
+  }
+}
+
 /**
  * 构造 Scripty 对外暴露的 MCP 工具集合。
+ * 环境变量读取会在本层投影为名称，任何已存值或遮罩值都不会进入 MCP 响应。
  * 每个条目包含 handler（实际执行逻辑）。工具名称、描述与 inputSchema 需与 plugin.json
  * 的 `tools` 声明保持一致——plugin.json 供宿主校验与展示，这里提供运行时实现。
  */
@@ -81,7 +180,8 @@ function buildToolHandlers(scripty) {
       const query = {}
       if (typeof input?.search === 'string') query.search = input.search
       if (SUPPORTED_LANGUAGES.includes(input?.language)) query.language = input.language
-      return unwrap(await scripty.scripts.list(query))
+      const scripts = unwrap(await scripty.scripts.list(query))
+      return { scripts }
     },
 
     get_script: async (input) => {
@@ -134,7 +234,8 @@ function buildToolHandlers(scripty) {
       if (typeof input?.search === 'string') query.search = input.search
       if (typeof input?.enabled === 'boolean') query.enabled = input.enabled
       if (typeof input?.readiness === 'string') query.readiness = input.readiness
-      return unwrap(await scripty.tasks.list(query))
+      const tasks = unwrap(await scripty.tasks.list(query))
+      return { tasks }
     },
 
     get_task: async (input) => {
@@ -245,6 +346,34 @@ function buildToolHandlers(scripty) {
       return unwrap(await scripty.tasks.previewSchedule(input.cron))
     },
 
+    // ==================== 环境变量管理 ====================
+    /** 返回符合筛选条件的环境变量名称，绝不携带值、遮罩值或其余摘要字段。 */
+    list_environment_variables: async (input) => {
+      const query = {}
+      if (typeof input?.search === 'string') query.search = input.search
+      if (['global', 'task'].includes(input?.scope)) query.scope = input.scope
+      if (typeof input?.taskId === 'string') query.taskId = input.taskId
+      if (typeof input?.enabled === 'boolean') query.enabled = input.enabled
+      const summaries = unwrap(await scripty.environments.list(query))
+      const names = summaries.map(variable => variable.name)
+      return { names }
+    },
+
+    /** 合并更新唯一匹配的变量；已有值仅在 preload 内保留且不会回显。 */
+    update_environment_variable: async (input) => {
+      const current = await findEnvironmentBySelector(scripty, input?.selector)
+      const draft = await buildEnvironmentUpdateInput(scripty, current, input?.changes)
+      const updated = unwrap(await scripty.environments.update(current.id, draft))
+      return { updated: true, name: updated.name }
+    },
+
+    /** 删除唯一匹配的变量，仅返回名称和删除状态。 */
+    delete_environment_variable: async (input) => {
+      const current = await findEnvironmentBySelector(scripty, input?.selector)
+      unwrap(await scripty.environments.remove(current.id))
+      return { deleted: true, name: current.name }
+    },
+
     // ==================== 运行控制 ====================
     run_task: async (input) => {
       if (typeof input?.taskId !== 'string') throw new Error('缺少 taskId')
@@ -257,7 +386,8 @@ function buildToolHandlers(scripty) {
     },
 
     list_active_runs: async () => {
-      return unwrap(await scripty.runs.getActive())
+      const runs = unwrap(await scripty.runs.getActive())
+      return { runs }
     },
 
     // ==================== 运行历史与日志 ====================

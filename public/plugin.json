@@ -297,6 +297,68 @@
         "required": ["cron"]
       }
     },
+    "list_environment_variables": {
+      "description": "列出 Scripty 中的环境变量名称。可按关键字、作用域、任务和启用状态筛选；只返回名称，绝不返回变量值、遮罩值或其他元数据。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "search": { "type": "string", "description": "按变量名称或备注模糊匹配" },
+          "scope": { "type": "string", "enum": ["global", "task"], "description": "按全局或任务作用域筛选" },
+          "taskId": { "type": "string", "description": "按任务 UUID 筛选" },
+          "enabled": { "type": "boolean", "description": "按是否启用筛选" }
+        }
+      }
+    },
+    "update_environment_variable": {
+      "description": "按名称定位并合并更新一个环境变量。selector 无法唯一定位时会拒绝操作；changes.value 仅用于写入且不会回显，省略时保留原值。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "object",
+            "description": "用于定位现有变量的名称和可选作用域",
+            "properties": {
+              "name": { "type": "string", "description": "现有环境变量名称" },
+              "scope": { "type": "string", "enum": ["global", "task"], "description": "现有变量作用域" },
+              "taskId": { "type": "string", "description": "现有任务级变量所属任务 UUID" }
+            },
+            "required": ["name"]
+          },
+          "changes": {
+            "type": "object",
+            "description": "要覆盖的字段；至少提供一个字段",
+            "properties": {
+              "name": { "type": "string", "description": "新变量名称" },
+              "value": { "type": "string", "description": "要写入的新值；省略则保留原值，响应不会回显" },
+              "note": { "type": "string", "description": "新备注" },
+              "scope": { "type": "string", "enum": ["global", "task"], "description": "新作用域" },
+              "taskId": { "type": "string", "description": "新任务 UUID；全局作用域会自动清空，省略则保留当前任务" },
+              "enabled": { "type": "boolean", "description": "是否启用" },
+              "sensitive": { "type": "boolean", "description": "是否按敏感值处理" }
+            }
+          }
+        },
+        "required": ["selector", "changes"]
+      }
+    },
+    "delete_environment_variable": {
+      "description": "按名称删除一个环境变量。可用作用域和任务 UUID 消歧；无法唯一定位时拒绝删除。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "selector": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "description": "要删除的环境变量名称" },
+              "scope": { "type": "string", "enum": ["global", "task"], "description": "变量作用域" },
+              "taskId": { "type": "string", "description": "任务级变量所属任务 UUID" }
+            },
+            "required": ["name"]
+          }
+        },
+        "required": ["selector"]
+      }
+    },
     "run_task": {
       "description": "立即手动运行一个任务，返回运行记录。任务需处于 ready 状态。",
       "inputSchema": {
