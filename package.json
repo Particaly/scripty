@@ -7,8 +7,7 @@
     "dev": "node scripts/watch-dev.mjs",
     "build": "vue-tsc && vite build && node scripts/finalize-build.mjs",
     "check": "npm run build",
-    "build:verify": "npm run build && node scripts/verify-build.mjs",
-    "verify:clean": "node scripts/verify-clean-copy.mjs"
+    "build:verify": "npm run build && node scripts/verify-build.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

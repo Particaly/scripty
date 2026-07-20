@@ -19,7 +19,7 @@
 - **管环境变量**：全局的和任务级的都支持，敏感值默认遮罩，写日志前也会脱敏，不会偷偷漏进日志文件
 - **依赖环境**：Node 的 `package.json` / `node_modules`、Python 的 `requirements.txt` / `.venv` 都在依赖页统一维护，不污染系统全局
 - **备份迁移**：导出 ZIP，换机器导入时能预览要改哪些东西，合并还是覆盖自己选
-- **给 AI 调**：Scripty 把脚本和任务能力暴露成一组 MCP 工具（`list_scripts`、`create_task`、`run_task`、`read_run_log`……），Claude Code 这类客户端连上 ZTools 就能直接操作——让 AI 帮你建脚本、配任务、跑完看日志都行
+- **给 AI 调**：Scripty 把脚本、任务和环境变量管理能力暴露成一组 MCP 工具（`list_scripts`、`create_task`、`list_environment_variables`、`update_environment_variable`、`delete_environment_variable`、`run_task`、`read_run_log`……），Claude Code 这类客户端连上 ZTools 就能直接操作——让 AI 帮你建脚本、配任务、维护环境变量、跑完看日志都行。环境变量的 MCP 读取严格只返回名称；更新时可以提交新值用于本地写入，但已有值和写入值都不会出现在工具响应里
 
 ## 上手流程
 
@@ -98,12 +98,6 @@ npm run build
 
 ```bash
 npm run build:verify
-```
-
-想在仓库外的全新副本上跑两遍安装构建、校验 `dist/` 文件哈希一致性：
-
-```bash
-npm run verify:clean
 ```
 
 ## 项目结构

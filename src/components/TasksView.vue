@@ -581,7 +581,6 @@ watch(
         <div class="task-row__header">
           <div class="task-row__title">
             <strong>{{ task.name }}</strong>
-            <ZTag :type="getReadinessTagType(task.readiness)" size="small">{{ readinessLabels[task.readiness] }}</ZTag>
           </div>
           <div class="task-row__actions">
             <ZButton type="primary" size="small" :loading="startingTaskIds.has(task.id)" :disabled="task.readiness !== 'ready'" @click="runTask(task)">运行</ZButton>
