@@ -158,7 +158,6 @@ onMounted(loadDependencies)
             <img :src="fileIconUrl(kind === 'node' ? 'package.json' : 'dependency.py')" alt="" aria-hidden="true" />
           </button>
         </div>
-        <ZTag v-if="installing" type="info" size="small">安装中...</ZTag>
       </div>
     </div>
 
