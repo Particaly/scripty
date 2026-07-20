@@ -16,6 +16,8 @@ interface LogLine {
   content: string
   isImage?: boolean
   imageDataUrl?: string
+  /** 图片开始标记已出现但结束标记尚未到达（仍在流式接收或日志截断）。 */
+  isPending?: boolean
 }
 
 const props = defineProps<{
@@ -70,6 +72,76 @@ function isDataUrlImage(content: string): boolean {
   return /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(content.trim())
 }
 
+/**
+ * 图片标记协议：脚本输出图片时用标记框住 base64 数据，避免按行分块后无法拼接。
+ * 开始标记：@@SCRIPTY_IMAGE_START:<mime>@@（如 image/png）
+ * 结束标记：@@SCRIPTY_IMAGE_END@@
+ * 两标记之间的内容（允许换行）会被去掉空白后拼成 data URL。
+ * 标记刻意以 @@ 包裹且带 SCRIPTY_ 前缀，降低与正常输出碰撞的概率。
+ */
+const IMAGE_START_RE = /@@SCRIPTY_IMAGE_START:([a-zA-Z]+\/[a-zA-Z0-9.+-]+)@@/
+const IMAGE_END_MARKER = '@@SCRIPTY_IMAGE_END@@'
+
+/**
+ * 把扁平日志条目里的图片标记折叠成单条图片条目。
+ * 扫描顺序敏感：收集到开始标记后，跨条目累积 base64 直到遇到结束标记，
+ * 中间纯 base64 的条目被吸收、不再单独展示。开始标记所在行的时间戳作为图片时间戳。
+ * 未闭合的开始标记保留为 isPending 占位条目（流式接收中或日志截断）。
+ */
+function parseImageMarkers(entries: LogLine[]): LogLine[] {
+  const result: LogLine[] = []
+  let collecting = false
+  let mime = ''
+  let buffer = ''
+  let imgTime = ''
+  let imgType: 'stdout' | 'stderr' = 'stdout'
+
+  for (const entry of entries) {
+    let cursor = entry.content
+    while (cursor) {
+      if (!collecting) {
+        const start = cursor.match(IMAGE_START_RE)
+        if (!start) {
+          result.push({ ...entry, content: cursor })
+          break
+        }
+        if (start.index! > 0) {
+          const before = cursor.slice(0, start.index)
+          if (before.trim()) result.push({ ...entry, content: before })
+        }
+        collecting = true
+        mime = start[1]
+        imgTime = entry.time
+        imgType = entry.type
+        cursor = cursor.slice(start.index! + start[0].length)
+      } else {
+        const endIdx = cursor.indexOf(IMAGE_END_MARKER)
+        if (endIdx < 0) {
+          buffer += cursor
+          break
+        }
+        buffer += cursor.slice(0, endIdx)
+        result.push({
+          time: imgTime,
+          type: imgType,
+          content: '',
+          isImage: true,
+          imageDataUrl: `data:${mime};base64,${buffer.replace(/\s+/g, '')}`
+        })
+        collecting = false
+        mime = ''
+        buffer = ''
+        cursor = cursor.slice(endIdx + IMAGE_END_MARKER.length)
+      }
+    }
+  }
+
+  if (collecting) {
+    result.push({ time: imgTime, type: imgType, content: '', isImage: true, imageDataUrl: '', isPending: true })
+  }
+  return result
+}
+
 /** Splits the persisted log buffer into `[hh:mm:ss] [type]` meta plus content entries, anchoring on the persisted line prefix. */
 const logEntries = computed<LogLine[]>(() => {
   const text = logContent.value
@@ -108,9 +180,10 @@ const liveLogEntries = computed<LogLine[]>(() => {
 })
 
 /** Entries rendered in the detail log grid, switching between live and persisted sources. */
-const visibleLogEntries = computed<LogLine[]>(() =>
-  detailMode.value === 'live' ? liveLogEntries.value : logEntries.value
-)
+const visibleLogEntries = computed<LogLine[]>(() => {
+  const raw = detailMode.value === 'live' ? liveLogEntries.value : logEntries.value
+  return parseImageMarkers(raw)
+})
 
 let historyRequestSequence = 0
 let unsubscribeRuns: (() => void) | null = null
@@ -366,8 +439,9 @@ onBeforeUnmount(disposeHistory)
             <div v-if="visibleLogEntries.length" class="history-log history-log--grid">
               <template v-for="(entry, index) in visibleLogEntries" :key="index">
                 <span class="history-log__meta" :class="`history-log__meta--${entry.type}`">[{{ entry.time }}] [{{ entry.type }}]</span>
-                <div v-if="entry.isImage && entry.imageDataUrl" class="history-log__content history-log__content--image">
-                  <img :src="entry.imageDataUrl" alt="运行截图" class="history-log__image" />
+                <div v-if="entry.isImage" class="history-log__content history-log__content--image">
+                  <img v-if="entry.imageDataUrl" :src="entry.imageDataUrl" alt="运行截图" class="history-log__image" />
+                  <span v-else class="history-log__image-pending">图片数据接收中…</span>
                 </div>
                 <span v-else class="history-log__content">{{ entry.content }}</span>
               </template>
@@ -486,6 +560,15 @@ onBeforeUnmount(disposeHistory)
   border: 1px solid var(--border-color);
   border-radius: 6px;
   display: block;
+}
+
+.history-log__image-pending {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 .history-list {

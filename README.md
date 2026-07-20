@@ -88,6 +88,29 @@ Node 和 Python 的直接依赖在独立的「依赖」页维护，统一装到 
 后处理命令失败不会影响依赖同步的成功状态，仅记录到输出日志。详细说明参见 `POSTINSTALL_FEATURE.md`。
 
 
+### 在运行日志里输出图片
+
+运行日志是按 stdout/stderr 流式分块记录的，每块都带 `[时间] [stdout|stderr] ` 前缀。一张大图的 base64 一旦带换行或被分块切断，就会被拆到多条日志里，直接 `print(dataUrl)` 这种单行写法在小图上偶尔能用，稍大一点就拼不回来。
+
+脚本输出截图、图表等图片时，用一对标记框住 base64 数据，前端会跨日志块自动重组并渲染：
+
+- 开始标记：`@@SCRIPTY_IMAGE_START:<mime>@@`，例如 `@@SCRIPTY_IMAGE_START:image/png@@`
+- 结束标记：`@@SCRIPTY_IMAGE_END@@`
+- 两个标记之间是 base64 编码的图片数据，**允许换行**，前端会先去掉空白再拼接
+
+Node.js 示例：
+
+```js
+const fs = require('fs')
+const b64 = fs.readFileSync('screenshot.png').toString('base64')
+process.stdout.write('@@SCRIPTY_IMAGE_START:image/png@@\n')
+process.stdout.write(b64 + '\n')   // 一次写完或分块写都行
+process.stdout.write('@@SCRIPTY_IMAGE_END@@\n')
+```
+
+`<mime>` 用标准 data URL 子类型：`image/png`、`image/jpeg`、`image/gif`、`image/webp`、`image/svg+xml` 等。标记本身也会写进日志文件，方便事后审阅；前端只把成对标记之间的内容渲染成图片。这套路数也同步到了 MCP 工具描述里，Claude Code 这类客户端帮你写脚本时会自动遵守。
+
+
 ### 不打算做这些（省得期望落空）
 
 - 多设备同步、用户系统、远程访问

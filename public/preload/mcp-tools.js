@@ -11,6 +11,13 @@
  * 本模块把 Scripty 内部 `Result<T>` 信封统一解包：成功返回纯数据（交给 MCP 作为
  * structuredContent + JSON 文本），失败抛出携带错误码的 Error，让标准 MCP 客户端
  * 看到明确的错误信息。
+ *
+ * 图片标记协议（AI 编写输出图片的脚本时必须遵守）：
+ *   开始标记：@@SCRIPTY_IMAGE_START:<mime>@@   例如 @@SCRIPTY_IMAGE_START:image/png@@
+ *   结束标记：@@SCRIPTY_IMAGE_END@@
+ * 两标记之间是 base64 数据，允许换行；前端 HistoryView.vue 会跨日志块重组并渲染。
+ * 该协议的 AI 可见说明同步在 plugin.json 的 create_script / update_script / read_run_log
+ * 描述里，解析实现与正则在 src/components/HistoryView.vue，改格式时三处必须一起更新。
  */
 
 const SUPPORTED_LANGUAGES = ['javascript', 'python', 'powershell', 'shell']
