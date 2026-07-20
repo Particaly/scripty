@@ -4,7 +4,7 @@
   "description": "ZTools 本地脚本任务管理器，支持安全执行、Cron 调度、环境变量、运行日志和备份迁移",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/watch-dev.mjs",
     "build": "vue-tsc && vite build && node scripts/finalize-build.mjs",
     "check": "npm run build",
     "build:verify": "npm run build && node scripts/verify-build.mjs",

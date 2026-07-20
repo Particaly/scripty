@@ -142,19 +142,30 @@ async function bundlePreload(stagingDirectory, productionManifest) {
   if (bundle.includes(ROOT)) throw new Error('Preload bundle contains the repository path')
 }
 
-/** Replaces Vite's intermediate output with installable dist and removes partial output if finalization fails. */
-export async function finalizeDistDirectory() {
-  if (!fs.existsSync(DIST_ROOT)) throw new Error('Missing Vite output directory: dist')
+/**
+ * Replaces the renderer output with installable dist, keeping last-good state if finalization fails.
+ *
+ * `inputDir` is where Vite wrote the renderer (production: `dist`; dev watch: `.vite-render`).
+ * `outputDir` is the final installable directory (always `dist`). When they match, the renderer
+ * input doubles as the output, so a failure tears it down to avoid leaving partial state — this
+ * preserves the original production behavior. When they differ (watch mode), the renderer output
+ * is left untouched and `outputDir` keeps its previous contents on failure.
+ */
+export async function finalizeDistDirectory({ inputDir = DIST_ROOT, outputDir = DIST_ROOT } = {}) {
+  const inputAbs = path.resolve(inputDir)
+  const outputAbs = path.resolve(outputDir)
+  const sharedInputOutput = inputAbs === outputAbs
+  if (!fs.existsSync(inputAbs)) throw new Error(`Missing Vite output directory: ${path.relative(ROOT, inputAbs) || inputAbs}`)
   const packageJson = readJson(path.join(ROOT, 'package.json'))
   const sourceManifest = readJson(path.join(ROOT, 'public/plugin.json'))
   const manifest = createProductionManifest(sourceManifest, packageJson.version)
-  const stagingDirectory = `${DIST_ROOT}.staging`
+  const stagingDirectory = `${outputAbs}.staging`
   fs.rmSync(stagingDirectory, { recursive: true, force: true })
   fs.mkdirSync(stagingDirectory, { recursive: true })
   try {
-    copyRendererFile(DIST_ROOT, stagingDirectory, 'index.html')
-    copyRendererFile(DIST_ROOT, stagingDirectory, 'logo.png')
-    for (const file of listFiles(path.join(DIST_ROOT, 'assets'))) copyRendererFile(DIST_ROOT, stagingDirectory, `assets/${file}`)
+    copyRendererFile(inputAbs, stagingDirectory, 'index.html')
+    copyRendererFile(inputAbs, stagingDirectory, 'logo.png')
+    for (const file of listFiles(path.join(inputAbs, 'assets'))) copyRendererFile(inputAbs, stagingDirectory, `assets/${file}`)
     const manifestPath = path.join(stagingDirectory, 'plugin.json')
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
     fs.mkdirSync(path.join(stagingDirectory, 'preload'), { recursive: true })
@@ -162,12 +173,47 @@ export async function finalizeDistDirectory() {
     await bundlePreload(stagingDirectory, manifestPath)
   } catch (error) {
     fs.rmSync(stagingDirectory, { recursive: true, force: true })
-    fs.rmSync(DIST_ROOT, { recursive: true, force: true })
+    if (sharedInputOutput) fs.rmSync(outputAbs, { recursive: true, force: true })
     throw error
   }
-  fs.rmSync(DIST_ROOT, { recursive: true, force: true })
-  fs.renameSync(stagingDirectory, DIST_ROOT)
+  await swapDirectory(stagingDirectory, outputAbs)
   return { packageJson, manifest }
+}
+
+/**
+ * Atomically replaces `target` with `staging`, retrying briefly to tolerate Windows EBUSY/EPERM
+ * when a host still holds a file handle inside `target` during dev watch. Falls back to a
+ * recursive copy if rename keeps failing (e.g. cross-volume staging — not expected here).
+ *
+ * Retries use real async delays so the event loop can drain between attempts — a synchronous
+ * busy-wait would never let the dev server release its file handle, defeating the retry.
+ */
+async function swapDirectory(stagingDirectory, target) {
+  let lastErr
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true })
+    } catch {
+      /* target may be momentarily busy; attempt the rename regardless */
+    }
+    try {
+      fs.renameSync(stagingDirectory, target)
+      return
+    } catch (err) {
+      lastErr = err
+      await new Promise(resolve => setTimeout(resolve, 80 * attempt))
+    }
+  }
+  fs.rmSync(target, { recursive: true, force: true })
+  fs.mkdirSync(target, { recursive: true })
+  for (const file of listFiles(stagingDirectory)) {
+    const segments = file.split('/')
+    const dest = path.join(target, ...segments)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.copyFileSync(path.join(stagingDirectory, ...segments), dest)
+  }
+  fs.rmSync(stagingDirectory, { recursive: true, force: true })
+  if (lastErr) console.warn(`[build] staging rename failed, fell back to copy: ${lastErr.message}`)
 }
 
 /** Returns stable per-file hashes for comparing installable build directories across clean builds. */
