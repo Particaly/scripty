@@ -1,5 +1,36 @@
 'use strict'
 
+// 宿主 preload 沙箱（尤其是 Windows 上的 ZTools）可能未定义裸 setImmediate/clearImmediate，
+// 而 require 链上的 yauzl/yazl（经 fd-slicer）会在各自 CommonJS 模块内部裸调用它们，
+// 导致导入备份时报 ReferenceError "setImmediate is not defined"。
+// 这里在加载任何依赖前先把实现挂到 globalThis，使后续被 require 的模块内部裸标识符可解析。
+// 优先级：复用宿主原生 -> node:timers -> setTimeout 兜底；取到的实现同时写回 globalThis。
+;(function ensureImmediateTimers(g) {
+  if (typeof g.setImmediate !== 'function') {
+    let setFn
+    try {
+      const timers = require('node:timers')
+      if (typeof timers.setImmediate === 'function') setFn = timers.setImmediate
+    } catch (e) {}
+    if (typeof setFn !== 'function') {
+      setFn = function setImmediateShim(callback) {
+        const args = Array.prototype.slice.call(arguments, 1)
+        return setTimeout(function () { callback.apply(null, args) }, 0)
+      }
+    }
+    try { g.setImmediate = setFn } catch (e) {}
+  }
+  if (typeof g.clearImmediate !== 'function') {
+    let clearFn
+    try {
+      const timers = require('node:timers')
+      if (typeof timers.clearImmediate === 'function') clearFn = timers.clearImmediate
+    } catch (e) {}
+    if (typeof clearFn !== 'function') clearFn = function clearImmediateShim(id) { return clearTimeout(id) }
+    try { g.clearImmediate = clearFn } catch (e) {}
+  }
+})(globalThis)
+
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
