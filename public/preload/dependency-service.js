@@ -342,7 +342,26 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
         }
         throw error
       }
-      return { kind, ...result, synchronized: true }
+
+      // 运行依赖同步后处理脚本（如果存在）
+      let postinstallOutput = ''
+      if (kind === 'node') {
+        try {
+          const postinstallScript = path.join(rootDirectory, '.postinstall.mjs')
+          if (fs.existsSync(postinstallScript)) {
+            const nodeExecutable = interpreterResolver.resolve('javascript', 'node')
+            if (nodeExecutable) {
+              const postinstallResult = await runInstaller(nodeExecutable, [postinstallScript], { cwd: rootDirectory, env: process.env }, spawnProcess)
+              postinstallOutput = postinstallResult.output
+            }
+          }
+        } catch (postinstallError) {
+          // 后处理失败不影响依赖同步成功状态，仅记录输出
+          postinstallOutput = `后处理脚本执行失败: ${postinstallError.message}`
+        }
+      }
+
+      return { kind, ...result, synchronized: true, postinstallOutput }
     } finally {
       installing.delete(kind)
       fs.rmSync(stagingRoot, { recursive: true, force: true })
@@ -361,21 +380,23 @@ function createDependencyService(rootDirectory, metadataRepository, interpreterR
         const kind = input?.kind
         const name = normalizeDependencyName(kind, input?.name)
         const versionSpec = normalizeVersionSpec(input?.versionSpec)
+        const postinstall = typeof input?.postinstall === 'string' ? input.postinstall.trim() || null : null
         if (dependencies.some(item => item.kind === kind && item.name === name)) throw new RepositoryError('NAME_CONFLICT', '直接依赖已存在')
         const timestamp = new Date().toISOString()
-        const dependency = { id: randomUUID(), kind, name, versionSpec, createdAt: timestamp, updatedAt: timestamp }
+        const dependency = { id: randomUUID(), kind, name, versionSpec, postinstall, createdAt: timestamp, updatedAt: timestamp }
         commitDeclarations([...dependencies, dependency])
         return dependency
       })
     },
 
     /** Changes one direct dependency version while preserving its stable ID. */
-    updateVersion(id, versionSpec) {
+    updateVersion(id, versionSpec, postinstall) {
       return invoke(() => {
         const dependencies = metadataRepository.read('dependencies')
         const index = dependencies.findIndex(item => item.id === id)
         if (index < 0) throw new RepositoryError('NOT_FOUND', '依赖不存在')
-        const updated = { ...dependencies[index], versionSpec: normalizeVersionSpec(versionSpec), updatedAt: new Date().toISOString() }
+        const postinstallValue = postinstall !== undefined ? (typeof postinstall === 'string' ? postinstall.trim() || null : null) : dependencies[index].postinstall
+        const updated = { ...dependencies[index], versionSpec: normalizeVersionSpec(versionSpec), postinstall: postinstallValue, updatedAt: new Date().toISOString() }
         const next = dependencies.slice(); next[index] = updated
         commitDeclarations(next)
         return updated

@@ -398,6 +398,7 @@ export interface CreateDependencyInput {
   kind: DependencyKind
   name: string
   versionSpec: string
+  postinstall?: string | null
 }
 
 export interface DependencySyncResult {
@@ -405,6 +406,7 @@ export interface DependencySyncResult {
   exitCode: number
   output: string
   synchronized: boolean
+  postinstallOutput?: string
 }
 
 export interface DependencyEnvironmentStatus {
@@ -421,7 +423,7 @@ export interface DependencyStatusSnapshot {
 export interface DependenciesApi {
   list(kind?: DependencyKind): Promise<Result<DependencySummary[]>>
   add(input: CreateDependencyInput): Promise<Result<Dependency>>
-  updateVersion(id: EntityId, versionSpec: string): Promise<Result<Dependency>>
+  updateVersion(id: EntityId, versionSpec: string, postinstall?: string | null): Promise<Result<Dependency>>
   remove(id: EntityId): Promise<Result<void>>
   sync(kind: DependencyKind): Promise<Result<DependencySyncResult>>
   getStatus(): Promise<Result<DependencyStatusSnapshot>>

@@ -14,6 +14,8 @@ interface LogLine {
   time: string
   type: 'stdout' | 'stderr'
   content: string
+  isImage?: boolean
+  imageDataUrl?: string
 }
 
 const props = defineProps<{
@@ -63,6 +65,11 @@ function formatTime(timestamp: string): string {
 /** True when the open detail is streaming a live run rather than reading a persisted log. */
 const isLiveDetail = computed(() => detailMode.value === 'live')
 
+/** Detects if content is a data URL image (base64 encoded). */
+function isDataUrlImage(content: string): boolean {
+  return /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(content.trim())
+}
+
 /** Splits the persisted log buffer into `[hh:mm:ss] [type]` meta plus content entries, anchoring on the persisted line prefix. */
 const logEntries = computed<LogLine[]>(() => {
   const text = logContent.value
@@ -72,7 +79,15 @@ const logEntries = computed<LogLine[]>(() => {
   return matches.map((match, index) => {
     const contentStart = match.index! + match[0].length
     const contentEnd = index + 1 < matches.length ? matches[index + 1].index! : text.length
-    return { time: match[1], type: match[2] as 'stdout' | 'stderr', content: text.slice(contentStart, contentEnd).replace(/\n$/, '') }
+    const content = text.slice(contentStart, contentEnd).replace(/\n$/, '')
+    const isImage = isDataUrlImage(content)
+    return {
+      time: match[1],
+      type: match[2] as 'stdout' | 'stderr',
+      content,
+      isImage,
+      imageDataUrl: isImage ? content.trim() : undefined
+    }
   })
 })
 
@@ -80,7 +95,16 @@ const logEntries = computed<LogLine[]>(() => {
 const liveLogEntries = computed<LogLine[]>(() => {
   if (detailMode.value !== 'live' || !selected.value) return []
   const entries = activeLogs.value[selected.value.id] ?? []
-  return [...entries].reverse().map(entry => ({ time: formatTime(entry.timestamp), type: entry.type, content: entry.content }))
+  return [...entries].reverse().map(entry => {
+    const isImage = isDataUrlImage(entry.content)
+    return {
+      time: formatTime(entry.timestamp),
+      type: entry.type,
+      content: entry.content,
+      isImage,
+      imageDataUrl: isImage ? entry.content.trim() : undefined
+    }
+  })
 })
 
 /** Entries rendered in the detail log grid, switching between live and persisted sources. */
@@ -342,7 +366,10 @@ onBeforeUnmount(disposeHistory)
             <div v-if="visibleLogEntries.length" class="history-log history-log--grid">
               <template v-for="(entry, index) in visibleLogEntries" :key="index">
                 <span class="history-log__meta" :class="`history-log__meta--${entry.type}`">[{{ entry.time }}] [{{ entry.type }}]</span>
-                <span class="history-log__content">{{ entry.content }}</span>
+                <div v-if="entry.isImage && entry.imageDataUrl" class="history-log__content history-log__content--image">
+                  <img :src="entry.imageDataUrl" alt="运行截图" class="history-log__image" />
+                </div>
+                <span v-else class="history-log__content">{{ entry.content }}</span>
               </template>
             </div>
             <pre v-else class="history-log">{{ isLiveDetail ? '等待输出…' : (logContent || '暂无日志') }}</pre>
@@ -446,6 +473,19 @@ onBeforeUnmount(disposeHistory)
 .history-log__content {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.history-log__content--image {
+  display: block;
+  margin: 4px 0;
+}
+
+.history-log__image {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  display: block;
 }
 
 .history-list {

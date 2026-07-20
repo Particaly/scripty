@@ -49,6 +49,7 @@ export interface Dependency extends TimestampedEntity {
   kind: DependencyKind
   name: string
   versionSpec: string
+  postinstall?: string | null
 }
 
 export interface InterpreterConfig {

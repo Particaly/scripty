@@ -17,6 +17,7 @@ const dialogVisible = ref(false)
 const editingId = ref<string | null>(null)
 const name = ref('')
 const versionSpec = ref('latest')
+const postinstall = ref('')
 const installing = ref(false)
 const currentDependencies = computed(() => dependencies.value.filter(item => item.kind === activeKind.value))
 const kindLabels: Record<DependencyKind, string> = { node: 'Node.js', python: 'Python' }
@@ -34,6 +35,7 @@ function openCreateDialog() {
   editingId.value = null
   name.value = ''
   versionSpec.value = 'latest'
+  postinstall.value = ''
   dialogVisible.value = true
 }
 
@@ -42,6 +44,7 @@ function openVersionDialog(dependency: DependencySummary) {
   editingId.value = dependency.id
   name.value = dependency.name
   versionSpec.value = dependency.versionSpec
+  postinstall.value = dependency.postinstall || ''
   dialogVisible.value = true
 }
 
@@ -52,8 +55,8 @@ async function saveDependency() {
 
   const isUpdate = Boolean(editingId.value)
   const result = isUpdate
-    ? await window.scripty.dependencies.updateVersion(editingId.value, versionSpec.value)
-    : await window.scripty.dependencies.add({ kind: activeKind.value, name: name.value, versionSpec: versionSpec.value })
+    ? await window.scripty.dependencies.updateVersion(editingId.value, versionSpec.value, postinstall.value.trim() || null)
+    : await window.scripty.dependencies.add({ kind: activeKind.value, name: name.value, versionSpec: versionSpec.value, postinstall: postinstall.value.trim() || null })
 
   if (result.ok === false) {
     installing.value = false
@@ -125,7 +128,8 @@ onMounted(loadDependencies)
         <h3>{{ editingId ? '修改依赖版本' : `新增 ${kindLabels[activeKind]} 依赖` }}</h3>
         <label><span>包名</span><ZInput v-model="name" :disabled="Boolean(editingId)" placeholder="例如：lodash / requests" /></label>
         <label><span>版本</span><ZInput v-model="versionSpec" placeholder="例如：^4.17.21 / >=2.32" /></label>
-        <p class="managed-copy-notice">仅支持 npm/PyPI 注册表包名和版本范围，不支持路径、URL、Git 或命令参数。</p>
+        <label><span>后处理命令（可选）</span><ZInput v-model="postinstall" placeholder="例如：npx playwright install chromium" /></label>
+        <p class="managed-copy-notice">仅支持 npm/PyPI 注册表包名和版本范围，不支持路径、URL、Git 或命令参数。后处理命令会在依赖同步后自动执行。</p>
         <div class="drawer-actions">
           <ZButton type="default" :disabled="installing" @click="dialogVisible = false">取消</ZButton>
           <ZButton type="primary" :loading="installing" :disabled="!name.trim() || !versionSpec.trim() || installing" @click="saveDependency">
