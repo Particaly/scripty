@@ -28,6 +28,8 @@ const records = ref<RunRecord[]>([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 20
+/** Chunk size used when auto-loading to close an unclosed image marker; the backend caps single reads at 256 KiB. */
+const autoImageChunkBytes = 256 * 1024
 const search = ref('')
 const status = ref<RunStatus | 'all'>('all')
 const trigger = ref<RunTrigger | 'all'>('all')
@@ -51,7 +53,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 /** Run ids known to be active, kept reactive so cards and the detail drawer reflect live state. */
 const activeRunIds = ref(new Set<string>())
-/** Live log buffers for active runs, capped at ~1 MiB each; released on finish unless a live detail holds them. */
+/** Live log buffers for active runs, held in full so multi-chunk images can reassemble; released on finish unless a live detail holds them. */
 const activeLogs = ref<Record<string, ActiveLogEntry[]>>({})
 const stoppingRunIds = ref(new Set<string>())
 /** Highest sequence seen per run, so stale events from a superseded snapshot are ignored. */
@@ -66,11 +68,6 @@ function formatTime(timestamp: string): string {
 
 /** True when the open detail is streaming a live run rather than reading a persisted log. */
 const isLiveDetail = computed(() => detailMode.value === 'live')
-
-/** Detects if content is a data URL image (base64 encoded). */
-function isDataUrlImage(content: string): boolean {
-  return /^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/.test(content.trim())
-}
 
 /**
  * 图片标记协议：脚本输出图片时用标记框住 base64 数据，避免按行分块后无法拼接。
@@ -142,47 +139,64 @@ function parseImageMarkers(entries: LogLine[]): LogLine[] {
   return result
 }
 
-/** Splits the persisted log buffer into `[hh:mm:ss] [type]` meta plus content entries, anchoring on the persisted line prefix. */
+/**
+ * Splits the persisted log buffer into entries.
+ * 图片标记可能单独成行（无时间戳前缀），需要作为独立条目参与解析；
+ * 否则 parseImageMarkers 会因为 START/END 被合并到前后条目尾巴而无法闭合。
+ * 不在此阶段判断图片，统一交给 parseImageMarkers 处理标记协议。
+ */
 const logEntries = computed<LogLine[]>(() => {
   const text = logContent.value
   if (!text) return []
-  const prefix = /(?:^|\n)\d{4}-\d{2}-\d{2} (\d{2}:\d{2}:\d{2}) \[(stdout|stderr)\] /g
-  const matches = [...text.matchAll(prefix)]
-  return matches.map((match, index) => {
-    const contentStart = match.index! + match[0].length
-    const contentEnd = index + 1 < matches.length ? matches[index + 1].index! : text.length
-    const content = text.slice(contentStart, contentEnd).replace(/\n$/, '')
-    const isImage = isDataUrlImage(content)
-    return {
-      time: match[1],
-      type: match[2] as 'stdout' | 'stderr',
-      content,
-      isImage,
-      imageDataUrl: isImage ? content.trim() : undefined
+  const lines = text.split('\n')
+  const result: LogLine[] = []
+  const prefix = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) \[(stdout|stderr)\] /
+
+  let currentTime = '00:00:00'
+  let currentType: 'stdout' | 'stderr' = 'stdout'
+
+  for (const line of lines) {
+    const match = line.match(prefix)
+    if (match) {
+      currentTime = match[2]
+      currentType = match[3] as 'stdout' | 'stderr'
+      const content = line.slice(match[0].length)
+      result.push({
+        time: currentTime,
+        type: currentType,
+        content
+      })
+    } else if (line.trim()) {
+      // 无时间戳前缀的非空行（如图片标记），继承上一条的时间和类型
+      result.push({
+        time: currentTime,
+        type: currentType,
+        content: line
+      })
     }
-  })
+  }
+  return result
 })
 
-/** Live log entries for the open run, reversed so the newest output stays pinned to the top. */
+/** Live log entries in emit order; image markers are parsed forward and displayed in chronological order. */
 const liveLogEntries = computed<LogLine[]>(() => {
   if (detailMode.value !== 'live' || !selected.value) return []
   const entries = activeLogs.value[selected.value.id] ?? []
-  return [...entries].reverse().map(entry => {
-    const isImage = isDataUrlImage(entry.content)
-    return {
-      time: formatTime(entry.timestamp),
-      type: entry.type,
-      content: entry.content,
-      isImage,
-      imageDataUrl: isImage ? entry.content.trim() : undefined
-    }
-  })
+  return entries.map(entry => ({
+    time: formatTime(entry.timestamp),
+    type: entry.type,
+    content: entry.content
+  }))
 })
 
-/** Entries rendered in the detail log grid, switching between live and persisted sources. */
+/**
+ * Entries rendered in the detail log grid, switching between live and persisted sources.
+ * 图片标记解析必须在原始 emit 顺序上进行（前向状态机：START → base64 → END）；
+ * 无论运行中还是运行完成，都按时间顺序从上到下输出，不再反转。
+ */
 const visibleLogEntries = computed<LogLine[]>(() => {
-  const raw = detailMode.value === 'live' ? liveLogEntries.value : logEntries.value
-  return parseImageMarkers(raw)
+  const input = detailMode.value === 'live' ? liveLogEntries.value : logEntries.value
+  return parseImageMarkers(input)
 })
 
 let historyRequestSequence = 0
@@ -216,16 +230,22 @@ async function openDetail(record: RunRecord) {
   if (detailMode.value === 'persisted') await loadNextLogChunk()
 }
 
-/** Appends one bounded 64 KiB persisted log chunk while capping renderer memory at 1 MiB. */
-async function loadNextLogChunk() {
+/**
+ * Appends one persisted log chunk without truncation, so a base64 image split across many chunks
+ * can reassemble inside `logContent` and close its END marker.
+ * `length` defaults to 64 KiB for manual paging; the image-auto-load watcher passes a larger block.
+ * The template binds this directly to `@click`, which passes the DOM event as the first argument,
+ * so a non-number `length` is coerced back to the default rather than sent to the backend.
+ */
+async function loadNextLogChunk(length: number = 64 * 1024) {
   if (!selected.value || logLoading.value || log.value?.end) return
+  const readLength = typeof length === 'number' ? length : 64 * 1024
   logLoading.value = true
-  const chunk = await window.scripty.history.readLog(selected.value.id, { offset: log.value?.nextOffset ?? 0, length: 64 * 1024 })
+  const chunk = await window.scripty.history.readLog(selected.value.id, { offset: log.value?.nextOffset ?? 0, length: readLength })
   logLoading.value = false
   if (chunk.ok === false) return emit('feedback', 'error', chunk.error.message)
   log.value = chunk.data
-  const combined = logContent.value + chunk.data.content
-  logContent.value = combined.length > 1024 * 1024 ? combined.slice(combined.length - 1024 * 1024) : combined
+  logContent.value += chunk.data.content
 }
 
 /** Closes the detail and releases any live buffer held open for a finished run. */
@@ -308,16 +328,6 @@ function markInactive(runId: string) {
   activeRunIds.value = next
 }
 
-/** Keeps the most recent live log entries within a byte budget, always retaining the latest entry. */
-function capLogEntries(entries: ActiveLogEntry[], maxBytes: number): ActiveLogEntry[] {
-  let total = 0
-  for (let i = entries.length - 1; i >= 0; i--) {
-    total += entries[i].content.length
-    if (total > maxBytes) return entries.slice(Math.min(i + 1, entries.length - 1))
-  }
-  return entries
-}
-
 /** Stops one active process tree and keeps the button locked until preload confirms a terminal record. */
 async function stopActiveRun(runId: string) {
   const api = window.scripty?.runs
@@ -350,7 +360,7 @@ function handleRunEvent(event: RunEvent) {
   } else if (event.type === 'stdout' || event.type === 'stderr') {
     const current = activeLogs.value[event.runId] ?? []
     const appended = [...current, { timestamp: new Date().toISOString(), type: event.type, content: event.chunk }]
-    activeLogs.value = { ...activeLogs.value, [event.runId]: capLogEntries(appended, 1024 * 1024) }
+    activeLogs.value = { ...activeLogs.value, [event.runId]: appended }
   }
 }
 
@@ -387,6 +397,17 @@ function disposeHistory() {
 }
 
 watch([search, status, trigger], () => { page.value = 1; void loadHistory() })
+/**
+ * 持久化日志按块读取，单张截图的 base64 通常远超一块；开始标记落在当前块而结束标记还在后续块时，
+ * parseImageMarkers 会留下 isPending 占位条目（显示"图片数据接收中…"）。只要还没读到文件末尾就自动
+ * 续读更大的块，直到图片闭合或日志读完，兑现 README 承诺的"跨日志块自动重组"。运行中的实时流不走此分支。
+ */
+watch(visibleLogEntries, entries => {
+  if (detailMode.value !== 'persisted') return
+  if (!entries.some(entry => entry.isPending)) return
+  if (!log.value || log.value.end || logLoading.value) return
+  void loadNextLogChunk(autoImageChunkBytes)
+})
 onMounted(initializeHistory)
 onBeforeUnmount(disposeHistory)
 </script>
@@ -447,7 +468,6 @@ onBeforeUnmount(disposeHistory)
               </template>
             </div>
             <pre v-else class="history-log">{{ isLiveDetail ? '等待输出…' : (logContent || '暂无日志') }}</pre>
-            <p v-if="!isLiveDetail && logContent.length >= 1024 * 1024" class="task-message">页面仅保留最近 1 MiB 日志内容。</p>
           </section>
         </div>
       </ZDrawerContent>
