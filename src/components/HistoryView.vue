@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { LogChunk, RunEvent } from '../types/api'
 import type { RunRecord, RunStatus, RunTrigger } from '../types/domain'
 import RunStatusTag from './RunStatusTag.vue'
+import ImageViewer from './ImageViewer.vue'
 
 interface ActiveLogEntry {
   timestamp: string
@@ -43,6 +44,8 @@ const logContent = ref('')
 const logLoading = ref(false)
 const retryingId = ref<string | null>(null)
 const cleaning = ref(false)
+/** 详情图片放大预览的 data URL；非空时挂载全屏 ImageViewer。 */
+const previewSrc = ref<string | null>(null)
 const triggerLabels = { manual: '手动', cron: '定时', retry: '重跑' } as const
 const statusOptions = [
   { label: '全部状态', value: 'all' }, { label: '成功', value: 'success' }, { label: '失败', value: 'failed' },
@@ -260,6 +263,12 @@ function closeDetail() {
   detailMode.value = null
   log.value = null
   logContent.value = ''
+  previewSrc.value = null
+}
+
+/** Opens the fullscreen zoom/pan viewer for one log image entry. */
+function openImagePreview(entry: LogLine) {
+  if (entry.imageDataUrl) previewSrc.value = entry.imageDataUrl
 }
 
 /** Starts a failed historical task through its current persisted configuration and refreshes the page afterward. */
@@ -461,7 +470,7 @@ onBeforeUnmount(disposeHistory)
               <template v-for="(entry, index) in visibleLogEntries" :key="index">
                 <span class="history-log__meta" :class="`history-log__meta--${entry.type}`">[{{ entry.time }}] [{{ entry.type }}]</span>
                 <div v-if="entry.isImage" class="history-log__content history-log__content--image">
-                  <img v-if="entry.imageDataUrl" :src="entry.imageDataUrl" alt="运行截图" class="history-log__image" />
+                  <img v-if="entry.imageDataUrl" :src="entry.imageDataUrl" alt="运行截图" title="点击放大" class="history-log__image" @click="openImagePreview(entry)" />
                   <span v-else class="history-log__image-pending">图片数据接收中…</span>
                 </div>
                 <span v-else class="history-log__content">{{ entry.content }}</span>
@@ -472,6 +481,8 @@ onBeforeUnmount(disposeHistory)
         </div>
       </ZDrawerContent>
     </ZDrawer>
+
+    <ImageViewer v-if="previewSrc" :src="previewSrc" @close="previewSrc = null" />
   </section>
 </template>
 
@@ -580,6 +591,12 @@ onBeforeUnmount(disposeHistory)
   border: 1px solid var(--border-color);
   border-radius: 6px;
   display: block;
+  cursor: zoom-in;
+  transition: filter 0.15s ease;
+}
+
+.history-log__image:hover {
+  filter: brightness(0.92);
 }
 
 .history-log__image-pending {
