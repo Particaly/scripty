@@ -4,7 +4,7 @@
   "title": "Scripty 任务库",
   "description": "本地管理、运行和定时调度脚本，支持环境变量、运行日志与备份迁移",
   "author": "皮皮虾我们走",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.html",
   "preload": "preload/services.js",
   "logo": "logo.png",
