@@ -221,7 +221,7 @@ async function loadHistory() {
   } else if (result?.ok === false) emit('feedback', 'error', result.error.message)
 }
 
-/** Opens one run detail; active runs stream live reverse logs, terminal runs read persisted chunks. */
+/** Opens one run detail from its history card; active runs stream live logs, terminal runs read persisted chunks. */
 async function openDetail(record: RunRecord) {
   const detail = await window.scripty.history.get(record.id)
   if (detail.ok === false) return emit('feedback', 'error', detail.error.message)
@@ -434,13 +434,26 @@ onBeforeUnmount(disposeHistory)
     <p v-if="loading" class="task-message" role="status">正在加载运行历史…</p>
     <div v-else-if="records.length === 0" class="empty-state"><div class="empty-state__mark">H</div><h3>暂无运行记录</h3><p>任务完成或失败后会保留摘要。</p></div>
     <ul v-else class="history-list">
-      <li v-for="record in records" :key="record.id" class="history-row">
-        <div><strong>{{ record.taskNameSnapshot }}</strong><span>{{ record.scriptNameSnapshot }}</span></div>
-        <RunStatusTag :status="record.status" />
-        <dl><div><dt>触发</dt><dd>{{ triggerLabels[record.trigger] }}</dd></div><div><dt>耗时</dt><dd>{{ formatDuration(record.durationMs) }}</dd></div><div><dt>退出码</dt><dd>{{ record.exitCode ?? '—' }}</dd></div></dl>
+      <li
+        v-for="record in records"
+        :key="record.id"
+        class="history-row"
+        role="button"
+        tabindex="0"
+        :aria-label="`查看${record.taskNameSnapshot}的运行详情`"
+        @click="openDetail(record)"
+        @keydown.enter="openDetail(record)"
+        @keydown.space.prevent="openDetail(record)"
+      >
+        <div class="history-row__summary">
+          <strong class="history-row__name">{{ record.taskNameSnapshot }}</strong>
+          <RunStatusTag :status="record.status" />
+          <span class="history-row__tag">{{ triggerLabels[record.trigger] }}</span>
+          <span class="history-row__tag">{{ formatDuration(record.durationMs) }}</span>
+        </div>
+        <time class="history-row__time" :datetime="record.startedAt">{{ formatDateTime(record.startedAt) }}</time>
         <p v-if="record.errorSummary" class="history-error">{{ record.errorSummary }}</p>
-        <div class="history-row__actions">
-          <ZButton size="small" @click="openDetail(record)">查看详情</ZButton>
+        <div v-if="activeRunIds.has(record.id) || record.status === 'failed'" class="history-row__actions" @click.stop @keydown.stop>
           <ZButton v-if="activeRunIds.has(record.id)" type="danger" size="small" :loading="stoppingRunIds.has(record.id)" @click="stopActiveRun(record.id)">停止</ZButton>
           <ZButton v-if="record.status === 'failed'" size="small" type="primary" :loading="retryingId === record.id" @click="retry(record)">快速重跑</ZButton>
         </div>
@@ -508,6 +521,7 @@ onBeforeUnmount(disposeHistory)
 
 .history-row__actions {
   justify-content: flex-start;
+  grid-column: 1 / -1;
 }
 
 /* zt-button--primary is a class on the ztools-ui button internals; reach it via :deep. */
@@ -627,40 +641,59 @@ onBeforeUnmount(disposeHistory)
 .history-row {
   max-height: 150px;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto minmax(120px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   padding: 16px 18px;
   border: 1px solid var(--border-color);
   border-radius: 14px;
   background: var(--card-bg);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.history-row > div:first-child {
-  display: grid;
-  gap: 4px;
+.history-row:hover {
+  border-color: color-mix(in srgb, var(--primary-color) 40%, var(--border-color));
+  background: var(--hover-bg);
 }
 
-.history-row > div:first-child span,
-.history-row dt {
+.history-row:focus-visible {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-light-bg);
+}
+
+.history-row__summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-row__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--card-bg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.history-row__time {
+  justify-self: end;
   color: var(--text-secondary);
   font-size: 12px;
-}
-
-.history-row dl {
-  display: flex;
-  justify-content: flex-end;
-  gap: 20px;
-  margin: 0;
-}
-
-.history-row dl div {
-  display: grid;
-  gap: 4px;
-}
-
-.history-row dd {
-  margin: 0;
+  white-space: nowrap;
 }
 
 .history-error {

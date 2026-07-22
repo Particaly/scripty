@@ -307,6 +307,7 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
   const api = {
     /**
      * Starts one persisted task using executable plus an argument array and returns once spawn emits.
+     * The run record snapshots the script's full filename (including extension) for historical details.
      * The renderer cannot provide an executable, source path, command string, shell option, or Cron trigger.
      */
     start(taskId, trigger = 'manual', scheduledToken) {
@@ -354,7 +355,7 @@ function createRunService(metadataRepository, managedScriptRepository, logFileRe
             id: runId,
             taskId: task.id,
             taskNameSnapshot: task.name,
-            scriptNameSnapshot: script.name,
+            scriptNameSnapshot: script.relativePath.split('/').pop() || script.name,
             trigger,
             startedAt,
             finishedAt: null,

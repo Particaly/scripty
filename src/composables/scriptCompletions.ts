@@ -204,6 +204,8 @@ function matchesPrefix(label: string, prefix: string): boolean {
 /**
  * Builds the merged, filtered and ranked suggestion list for the current prefix.
  * Exact case match ranks first, then static (curated) entries, then alphabetical.
+ * The complete matched pool is returned so CodeMirror can rescore it as the user
+ * continues typing; the editor configuration limits how many rows are rendered.
  */
 export function collectCompletions(code: string, language: ScriptLanguage, prefix: string): CompletionItem[] {
   if (!prefix) return []
@@ -228,5 +230,5 @@ export function collectCompletions(code: string, language: ScriptLanguage, prefi
     return left.label.localeCompare(right.label, 'en')
   })
 
-  return matched.slice(0, 24)
+  return matched
 }

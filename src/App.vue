@@ -60,7 +60,7 @@ const sections = [
   { id: 'scripts', label: '脚本', icon: ScriptsIcon, title: '还没有脚本', description: '新建脚本后，源码将由 Scripty 统一托管。' },
   { id: 'dependencies', label: '依赖', icon: DependenciesIcon, title: '还没有依赖', description: '在这里管理所有脚本共享的 Node.js 与 Python 直接依赖。' },
   { id: 'environments', label: '环境变量', icon: EnvironmentsIcon, title: '还没有环境变量', description: '在这里维护任务运行时需要注入的全局变量和任务变量。' },
-  { id: 'history', label: '运行历史', icon: HistoryIcon, title: '暂无运行记录', description: '任务执行后，可在这里查看运行中任务、状态、耗时、退出码和日志。' },
+  { id: 'history', label: '运行历史', icon: HistoryIcon, title: '暂无运行记录', description: '任务执行后，可在这里查看运行中任务、状态、执行时间、耗时和日志。' },
   { id: 'backups', label: '备份', icon: BackupsIcon, title: '尚未生成备份', description: '选择需要迁移的数据后，可在这里导出备份。' }
 ] as const
 

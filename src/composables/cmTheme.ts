@@ -40,7 +40,7 @@ const editorTheme = EditorView.theme({
     outline: 'none'
   },
   '.cm-tooltip, .cm-tooltipAutocomplete > ul > li[aria-selected]': {
-    backgroundColor: 'var(--card-bg)',
+    backgroundColor: 'var(--dialog-bg, var(--input-bg))',
     border: '1px solid var(--border-color)'
   },
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
